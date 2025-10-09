@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait}, BuildStreamError, Device, Stream, StreamConfig
 };
