@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 bytemuck = { version = "1.24.0", features = ["derive"] }
 cpal = "0.16.0"
+opus = "0.3.0"
 ringbuf = "0.4.8"
 
 [[bin]]
