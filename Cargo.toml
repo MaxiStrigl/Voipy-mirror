@@ -1,19 +1,14 @@
-[package]
-name = "caller"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+  "crates/client",
+  "crates/server",
+  "crates/protocol",
+  "crates/audio_capture",
+  "crates/audio_playback"
+]
+resolver = "3"
 
-[dependencies]
-anyhow = "1.0.100"
-bytemuck = { version = "1.24.0", features = ["derive"] }
-cpal = "0.16.0"
-opus = "0.3.0"
-ringbuf = "0.4.8"
 
-[[bin]]
-name = "sender"
-path = "src/sender.rs"
-
-[[bin]]
-name = "receiver"
-path = "src/receiver.rs"
+[profile.release]
+lto = true
+codegen-units = 1

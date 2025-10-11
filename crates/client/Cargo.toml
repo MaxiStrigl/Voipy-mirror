@@ -1,0 +1,8 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+audio_capture = { path = "../audio_capture/" }
+audio_playback = { path = "../audio_playback/" }
