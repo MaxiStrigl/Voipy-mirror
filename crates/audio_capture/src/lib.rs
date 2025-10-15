@@ -1,9 +1,11 @@
 use anyhow::Result;
+use bincode::config;
 use cpal::{
     traits::{DeviceTrait, StreamTrait}
 };
 use cpal::traits::HostTrait;
-use opus::Encoder;
+use opus::{Encoder};
+use protocol::Packet;
 use std::{net::UdpSocket, sync::Arc};
 use thiserror::Error;
 
@@ -97,10 +99,20 @@ impl Capture {
                 match encoder.encode_float(chunk, &mut opus_buffer) {
                     Ok(compressed_size) => {
                         let compressed_data = &opus_buffer[..compressed_size];
-                        config
-                            .socket
-                            .send_to(compressed_data, &config.remote_addr)
-                            .ok();
+
+                        let voice_packet = Packet::Audio { data: compressed_data.to_vec() };  
+
+                        match bincode::serde::encode_to_vec(voice_packet, config::standard()) {
+                            Ok(package) => {
+                                config.socket.send_to(&package, &config.remote_addr).ok();
+                            },
+                            Err(_) => println!("Failed to send voice package :("),
+                        }
+
+                        // config
+                        //     .socket
+                        //     .send_to(compressed_data, &config.remote_addr)
+                        //     .ok();
                     }
                     Err(err) => eprintln!("Opus encoding error: {}", err),
                 }

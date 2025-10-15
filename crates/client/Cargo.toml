@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 audio_capture = { path = "../audio_capture/" }
 audio_playback = { path = "../audio_playback/" }
+bincode = { version = "2.0.1", features = ["serde"] }
+protocol = { path = "../protocol/" }

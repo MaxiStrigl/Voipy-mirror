@@ -1,7 +1,9 @@
 use anyhow::Result;
+use bincode::config;
 use cpal::traits::{HostTrait, StreamTrait};
 use cpal::traits::{DeviceTrait};
 use opus::{Decoder};
+use protocol::Packet;
 use ringbuf::HeapRb;
 use ringbuf::traits::*;
 use std::{net::UdpSocket, sync::Arc};
@@ -88,7 +90,14 @@ impl Playback {
                 if let Ok((size, _)) = config.socket.recv_from(&mut receive_buffer) {
                     let compressed = &receive_buffer[..size];
 
-                    match decoder.decode_float(compressed, &mut opus_buffer, false) {
+                    let compressed: Packet = bincode::serde::decode_from_slice(&compressed, config::standard()).unwrap().0;
+
+                    let compressed = match compressed {
+                        Packet::Handshake { .. } => continue,
+                        Packet::Audio { data } => data,
+                    };
+
+                    match decoder.decode_float(&compressed, &mut opus_buffer, false) {
                         Ok(num_decoded_samples_per_channel) => {
                             let total_samples =
                                 num_decoded_samples_per_channel * stream_config.channels as usize;
