@@ -38,6 +38,8 @@ fn main() -> std::io::Result<()> {
                 Packet::Audio { .. } => {
                     if clients.contains_key(&src) {
                         clients.insert(src, Instant::now());
+                    } else {
+                        continue;
                     }
 
                     for (dest, _) in &clients {
