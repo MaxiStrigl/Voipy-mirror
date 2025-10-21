@@ -42,26 +42,28 @@ enum SignalMessage {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // let ip = std::env::args().nth(1);
+    let ip = std::env::args().nth(1);
     // let password = std::env::args().nth(2);
 
     // if ip.is_none() || password.is_none() {
     // println!("Usage: client <server_ip> <password>");
     // }
 
-    // let ip = ip.unwrap();
+    let ip = ip.unwrap();
+
+    let address = format!("ws://{}:40000/signaling_route", ip);
     // let password = password.unwrap();
 
     // let socket = setup_udp(&ip, &password);
 
     let api = setup_api()?;
 
-    let is_caller = std::env::args().nth(1).is_some();
+    let is_caller = std::env::args().nth(2).is_some();
     let mut offer_sent = false;
 
     let mut active_playbacks = Arc::new(Mutex::new(Vec::<Playback>::new()));
 
-    let (ws_stream, _) = connect_async("ws://127.0.0.1:40000/signaling_route").await?;
+    let (ws_stream, _) = connect_async(address).await?;
     println!("Connected to the server");
 
     let (mut ws_sender, mut ws_reciever) = ws_stream.split();
