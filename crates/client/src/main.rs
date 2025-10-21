@@ -2,7 +2,7 @@ use std::{io::Read, net::UdpSocket, sync::Arc, time::Duration};
 
 use anyhow::Result;
 
-use audio_capture::CaptureConfig;
+use audio_capture::{Capture, CaptureConfig};
 use audio_playback::{Playback, PlaybackConfig};
 use bincode::config;
 use futures_util::{SinkExt, StreamExt, lock::Mutex};
@@ -92,10 +92,12 @@ async fn main() -> Result<()> {
         })
     }));
 
+    let tokio_handle_clone = tokio_handle.clone();
+
     //TODO: Handle audio setup here
     peer_connection.on_track(Box::new(
         move |track: Arc<TrackRemote>, _: Arc<RTCRtpReceiver>, _: Arc<RTCRtpTransceiver>| {
-            let handle_clone = tokio_handle.clone();
+            let handle_clone = tokio_handle_clone.clone();
             let playbacks = active_playbacks.clone();
             Box::pin(async move {
                 if track.kind() == RTPCodecType::Audio {
@@ -113,7 +115,6 @@ async fn main() -> Result<()> {
                             println!("Got audio track: {}", track.stream_id());
 
                             playbacks.lock().await.push(p);
-                            
                         }
                         Err(_) => todo!(),
                     }
@@ -143,6 +144,17 @@ async fn main() -> Result<()> {
         "audio".to_owned(),
         "test".to_owned(),
     ));
+    
+
+    let capture_config = CaptureConfig {
+        track: audio_track.clone(),
+        tokio_handle: tokio_handle,
+        sample_rate: 48000,
+        snippet_duration: 20,
+        channels: 1,
+    };
+    
+    let capute = Capture::new(capture_config);
 
     peer_connection.add_track(audio_track.clone()).await?;
     println!("Added audio connection to track");

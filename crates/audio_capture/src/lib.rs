@@ -1,13 +1,15 @@
 use anyhow::Result;
 use bincode::config;
-use cpal::{
-    traits::{DeviceTrait, StreamTrait}
-};
 use cpal::traits::HostTrait;
-use opus::{Encoder};
+use cpal::traits::{DeviceTrait, StreamTrait};
+use opus::Encoder;
 use protocol::Packet;
-use std::{net::UdpSocket, sync::Arc};
+use std::{net::UdpSocket, sync::Arc, time::Duration};
 use thiserror::Error;
+use tokio::runtime::Handle;
+use webrtc::{
+    media::Sample, track::track_local::track_local_static_sample::TrackLocalStaticSample,
+};
 
 /// Custom error type for the capture library.
 #[derive(Debug, Error)]
@@ -30,18 +32,17 @@ pub enum CaptureError {
 
 /// Configurations for the audio capture stream
 pub struct CaptureConfig {
-    /// Shared UDP sockert for sending the audio data
-    pub socket: Arc<UdpSocket>,
-    /// Remote address to send to
-    pub remote_addr: String,
+    pub track: Arc<TrackLocalStaticSample>,
+    pub tokio_handle: Handle,
     /// Desired sample rate for the transmitioon
     pub sample_rate: u32,
     /// Audio-Duration of a single packet
     pub snippet_duration: u32,
+    pub channels: u32,
 }
 
 pub struct Capture {
-    _stream: cpal::Stream
+    _stream: cpal::Stream,
 }
 
 impl Capture {
@@ -90,6 +91,10 @@ impl Capture {
         let mut audio_buffer: Vec<f32> = Vec::new();
         let mut opus_buffer = vec![0u8; 4096];
 
+        let track = config.track;
+        let handle = config.tokio_handle;
+        let snippet_duration = Duration::from_millis(20);
+
         let input_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
             audio_buffer.extend_from_slice(data);
 
@@ -100,14 +105,28 @@ impl Capture {
                     Ok(compressed_size) => {
                         let compressed_data = &opus_buffer[..compressed_size];
 
-                        let voice_packet = Packet::Audio { data: compressed_data.to_vec() };  
+                        let track_clone = track.clone();
 
-                        match bincode::serde::encode_to_vec(voice_packet, config::standard()) {
-                            Ok(package) => {
-                                config.socket.send_to(&package, &config.remote_addr).ok();
-                            },
-                            Err(_) => println!("Failed to send voice package :("),
-                        }
+                        let data_copy = compressed_data.to_vec();
+
+                        handle.spawn(async move {
+                            let sample = Sample {
+                                data: data_copy.into(),
+                                duration: snippet_duration,
+                                ..Default::default()
+                            };
+
+                            if let Err(e) = track_clone.write_sample(&sample).await {}
+                        });
+
+                        // let voice_packet = Packet::Audio { data: compressed_data.to_vec() };
+                        //
+                        // match bincode::serde::encode_to_vec(voice_packet, config::standard()) {
+                        //     Ok(package) => {
+                        //         config.socket.send_to(&package, &config.remote_addr).ok();
+                        //     },
+                        //     Err(_) => println!("Failed to send voice package :("),
+                        // }
 
                         // config
                         //     .socket
@@ -125,9 +144,10 @@ impl Capture {
             eprintln!("An error occured in the input stream: {}", err);
         };
 
-        let stream = device.build_input_stream(&stream_config, input_callback, error_callback, None)?;
+        let stream =
+            device.build_input_stream(&stream_config, input_callback, error_callback, None)?;
         stream.play().unwrap();
 
-        Ok(Self {_stream: stream})
+        Ok(Self { _stream: stream })
     }
 }
