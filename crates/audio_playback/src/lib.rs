@@ -6,6 +6,9 @@ use opus::{Decoder};
 use protocol::Packet;
 use ringbuf::HeapRb;
 use ringbuf::traits::*;
+use tokio::runtime::Handle;
+use webrtc::track::track_local::track_local_static_rtp;
+use webrtc::track::track_remote::TrackRemote;
 use std::{net::UdpSocket, sync::Arc};
 use thiserror::Error;
 
@@ -30,12 +33,15 @@ pub enum PlaybackError {
 
 /// Configurations for the audio playback stream
 pub struct PlaybackConfig {
-    /// Shared UDP sockert for receiving the audio data
-    pub socket: Arc<UdpSocket>,
+    pub track: Arc<TrackRemote>,
     /// Desired sample rate for the transmitioon
     pub sample_rate: u32,
     /// Audio-Duration of a single packet
     pub snippet_duration: u32,
+
+    pub tokio_handle: Handle,
+    /// Number of Channesl 
+    pub channels: u32,
 }
 
 pub struct Playback {
@@ -81,32 +87,48 @@ impl Playback {
         let ringbuffer = HeapRb::<f32>::new(48000);
         let (mut producer, mut consumer) = ringbuffer.split();
 
+        let track = config.track;
+
         // --- Spawn receiving thread ---
-        std::thread::spawn(move || {
-            let mut receive_buffer = [0u8; 4096]; //4 KiB // just a guess
+        config.tokio_handle.spawn(async move {
             let mut opus_buffer = [0f32; 11520]; // 48000 Sample rate * 2 Channels * 0.120 ms (opus max)
 
             loop {
-                if let Ok((size, _)) = config.socket.recv_from(&mut receive_buffer) {
-                    let compressed = &receive_buffer[..size];
+                match  track.read_rtp().await {
+                    Ok((packet, _)) => {
+                        let compressed = packet.payload;
 
-                    let compressed: Packet = bincode::serde::decode_from_slice(&compressed, config::standard()).unwrap().0;
-
-                    let compressed = match compressed {
-                        Packet::Handshake { .. } => continue,
-                        Packet::Audio { data } => data,
-                    };
-
-                    match decoder.decode_float(&compressed, &mut opus_buffer, false) {
-                        Ok(num_decoded_samples_per_channel) => {
-                            let total_samples =
-                                num_decoded_samples_per_channel * stream_config.channels as usize;
-
-                            producer.push_slice(&opus_buffer[..total_samples]);
+                        match decoder.decode_float(&compressed, &mut opus_buffer, false) {
+                            Ok(num_decoded_samples_per_channel) => {
+                                let total_samples = num_decoded_samples_per_channel * config.channels as usize;
+                                producer.push_slice(&opus_buffer[..total_samples]);
+                            },
+                            Err(_) => todo!(),
                         }
-                        Err(e) => eprintln!("Opus decoding error: {}", e),
-                    }
+                    },
+                    Err(_) => todo!(),
                 }
+
+                // if let Ok((size, _)) = config.socket.recv_from(&mut receive_buffer) {
+                //     let compressed = &receive_buffer[..size];
+                //
+                //     let compressed: Packet = bincode::serde::decode_from_slice(&compressed, config::standard()).unwrap().0;
+                //
+                //     let compressed = match compressed {
+                //         Packet::Handshake { .. } => continue,
+                //         Packet::Audio { data } => data,
+                //     };
+                //
+                //     match decoder.decode_float(&compressed, &mut opus_buffer, false) {
+                //         Ok(num_decoded_samples_per_channel) => {
+                //             let total_samples =
+                //                 num_decoded_samples_per_channel * stream_config.channels as usize;
+                //
+                //             producer.push_slice(&opus_buffer[..total_samples]);
+                //         }
+                //         Err(e) => eprintln!("Opus decoding error: {}", e),
+                //     }
+                // }
             }
         });
 

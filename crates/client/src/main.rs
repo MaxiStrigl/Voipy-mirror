@@ -2,8 +2,10 @@ use std::{io::Read, net::UdpSocket, sync::Arc, time::Duration};
 
 use anyhow::Result;
 
+use audio_capture::CaptureConfig;
+use audio_playback::{Playback, PlaybackConfig};
 use bincode::config;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, lock::Mutex};
 use protocol::Packet;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
@@ -23,7 +25,7 @@ use webrtc::{
     },
     rtp_transceiver::{
         RTCRtpTransceiver,
-        rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters},
+        rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
         rtp_receiver::RTCRtpReceiver,
     },
     track::{
@@ -57,6 +59,8 @@ async fn main() -> Result<()> {
     let is_caller = std::env::args().nth(1).is_some();
     let mut offer_sent = false;
 
+    let mut active_playbacks = Arc::new(Mutex::new(Vec::<Playback>::new()));
+
     let (ws_stream, _) = connect_async("ws://127.0.0.1:40000/signaling_route").await?;
     println!("Connected to the server");
 
@@ -64,6 +68,8 @@ async fn main() -> Result<()> {
 
     let config = RTCConfiguration::default();
     let peer_connection = Arc::new(api.new_peer_connection(config).await?);
+
+    let tokio_handle = tokio::runtime::Handle::current();
 
     let (candidate_sender, mut candidate_receiver) =
         mpsc::unbounded_channel::<RTCIceCandidateInit>();
@@ -89,8 +95,30 @@ async fn main() -> Result<()> {
     //TODO: Handle audio setup here
     peer_connection.on_track(Box::new(
         move |track: Arc<TrackRemote>, _: Arc<RTCRtpReceiver>, _: Arc<RTCRtpTransceiver>| {
+            let handle_clone = tokio_handle.clone();
+            let playbacks = active_playbacks.clone();
             Box::pin(async move {
-                println!("Got remote track: {}", track.tid());
+                if track.kind() == RTPCodecType::Audio {
+                    let config = PlaybackConfig {
+                        track: track.clone(),
+                        sample_rate: 48000,
+                        snippet_duration: 20,
+                        channels: 1,
+                        tokio_handle: handle_clone,
+                    };
+                    let playback = Playback::new(config);
+
+                    match playback {
+                        Ok(p) => {
+                            println!("Got audio track: {}", track.stream_id());
+
+                            playbacks.lock().await.push(p);
+                            
+                        }
+                        Err(_) => todo!(),
+                    }
+                } else {
+                }
             })
         },
     ));

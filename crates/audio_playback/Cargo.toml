@@ -12,3 +12,6 @@ ringbuf = "0.4.8"
 thiserror = "2.0.17"
 protocol = { path = "../protocol/" }
 bincode = { version = "2.0.1", features = ["serde"] }
+webrtc = "0.14.0"
+tokio-tungstenite = "0.28.0"
+tokio = { version = "1.48.0", features = ["full"] }
