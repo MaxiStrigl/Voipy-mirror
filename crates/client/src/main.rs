@@ -159,28 +159,28 @@ async fn main() -> Result<()> {
     peer_connection.add_track(audio_track.clone()).await?;
     println!("Added audio connection to track");
 
-    tokio::spawn(async move {
-        let silent_opus_frame: [u8; 3] = [0xf8, 0xff, 0xfe];
-        let sample = webrtc::media::Sample {
-            data: silent_opus_frame.to_vec().into(),
-            duration: Duration::from_millis(20),
-            ..Default::default()
-        };
-
-        let mut ticker = tokio::time::interval(Duration::from_millis(20));
-
-        println!("sending audio samples");
-
-        loop {
-            ticker.tick().await;
-
-            if let Err(e) = audio_track.write_sample(&sample).await {
-                eprintln!("Failed to send audio");
-                break;
-            }
-        }
-    });
-
+    // tokio::spawn(async move {
+    //     let silent_opus_frame: [u8; 3] = [0xf8, 0xff, 0xfe];
+    //     let sample = webrtc::media::Sample {
+    //         data: silent_opus_frame.to_vec().into(),
+    //         duration: Duration::from_millis(20),
+    //         ..Default::default()
+    //     };
+    //
+    //     let mut ticker = tokio::time::interval(Duration::from_millis(20));
+    //
+    //     println!("sending audio samples");
+    //
+    //     loop {
+    //         ticker.tick().await;
+    //
+    //         if let Err(e) = audio_track.write_sample(&sample).await {
+    //             eprintln!("Failed to send audio");
+    //             break;
+    //         }
+    //     }
+    // });
+    //
     println!("Waiting for signals");
 
     loop {

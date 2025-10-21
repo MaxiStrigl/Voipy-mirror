@@ -148,6 +148,8 @@ dependencies = [
  "protocol",
  "ringbuf",
  "thiserror 2.0.17",
+ "tokio",
+ "webrtc",
 ]
 
 [[package]]
@@ -162,6 +164,9 @@ dependencies = [
  "protocol",
  "ringbuf",
  "thiserror 2.0.17",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "webrtc",
 ]
 
 [[package]]
@@ -1766,7 +1771,6 @@ name = "protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
- "webrtc",
 ]
 
 [[package]]
