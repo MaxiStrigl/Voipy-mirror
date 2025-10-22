@@ -1,12 +1,9 @@
-use std::{io::Read, net::UdpSocket, sync::Arc, time::Duration};
-
+use std::sync::Arc;
 use anyhow::Result;
 
 use audio_capture::{Capture, CaptureConfig};
 use audio_playback::{Playback, PlaybackConfig};
-use bincode::config;
 use futures_util::{SinkExt, StreamExt, lock::Mutex};
-use protocol::Packet;
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use webrtc::{
@@ -15,12 +12,10 @@ use webrtc::{
         interceptor_registry::register_default_interceptors,
         media_engine::{MIME_TYPE_OPUS, MediaEngine},
     },
-    ice::candidate,
     ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
-    interceptor::{Interceptor, registry::Registry},
+    interceptor::registry::Registry,
     peer_connection::{
-        OnTrackHdlrFn, configuration::RTCConfiguration,
-        peer_connection_state::RTCPeerConnectionState,
+        configuration::RTCConfiguration, peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription,
     },
     rtp_transceiver::{
@@ -43,25 +38,17 @@ enum SignalMessage {
 #[tokio::main]
 async fn main() -> Result<()> {
     let ip = std::env::args().nth(1);
-    // let password = std::env::args().nth(2);
-
-    // if ip.is_none() || password.is_none() {
-    // println!("Usage: client <server_ip> <password>");
-    // }
 
     let ip = ip.unwrap();
 
     let address = format!("ws://{}:40000/signaling_route", ip);
-    // let password = password.unwrap();
-
-    // let socket = setup_udp(&ip, &password);
 
     let api = setup_api()?;
 
     let is_caller = std::env::args().nth(2).is_some();
     let mut offer_sent = false;
 
-    let mut active_playbacks = Arc::new(Mutex::new(Vec::<Playback>::new()));
+    let active_playbacks = Arc::new(Mutex::new(Vec::<Playback>::new()));
 
     let (ws_stream, _) = connect_async(address).await?;
     println!("Connected to the server");
@@ -96,7 +83,6 @@ async fn main() -> Result<()> {
 
     let tokio_handle_clone = tokio_handle.clone();
 
-    //TODO: Handle audio setup here
     peer_connection.on_track(Box::new(
         move |track: Arc<TrackRemote>, _: Arc<RTCRtpReceiver>, _: Arc<RTCRtpTransceiver>| {
             let handle_clone = tokio_handle_clone.clone();
@@ -146,7 +132,6 @@ async fn main() -> Result<()> {
         "audio".to_owned(),
         "test".to_owned(),
     ));
-    
 
     let capture_config = CaptureConfig {
         track: audio_track.clone(),
@@ -155,34 +140,12 @@ async fn main() -> Result<()> {
         snippet_duration: 20,
         channels: 1,
     };
-    
-    let capute = Capture::new(capture_config);
+
+    let _capture = Capture::new(capture_config);
 
     peer_connection.add_track(audio_track.clone()).await?;
     println!("Added audio connection to track");
 
-    // tokio::spawn(async move {
-    //     let silent_opus_frame: [u8; 3] = [0xf8, 0xff, 0xfe];
-    //     let sample = webrtc::media::Sample {
-    //         data: silent_opus_frame.to_vec().into(),
-    //         duration: Duration::from_millis(20),
-    //         ..Default::default()
-    //     };
-    //
-    //     let mut ticker = tokio::time::interval(Duration::from_millis(20));
-    //
-    //     println!("sending audio samples");
-    //
-    //     loop {
-    //         ticker.tick().await;
-    //
-    //         if let Err(e) = audio_track.write_sample(&sample).await {
-    //             eprintln!("Failed to send audio");
-    //             break;
-    //         }
-    //     }
-    // });
-    //
     println!("Waiting for signals");
 
     loop {
@@ -208,7 +171,6 @@ async fn main() -> Result<()> {
                             let json_msg = serde_json::to_string(&msg)?;
                             ws_sender.send(Message::Text(json_msg.into())).await?;
                         }
-
 
                     Some(Ok(msg)) = ws_reciever.next() => {
                         match msg {
@@ -255,27 +217,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-//
-// let config = CaptureConfig {
-//     socket: socket.clone(),
-//     remote_addr: ip,
-//     sample_rate: 48000,
-//     snippet_duration: 20,
-// };
-// let capture = Capture::new(config).ok().unwrap();
-//
-// let config = PlaybackConfig {
-//     socket: socket,
-//     sample_rate: 48000,
-//     snippet_duration: 20,
-// };
-//
-// let playback = Playback::new(config).ok().unwrap();
-//
-// std::thread::park();
-//
-// Ok(())
-
 fn setup_api() -> Result<API> {
     let mut m = MediaEngine::default();
 
@@ -302,23 +243,4 @@ fn setup_api() -> Result<API> {
         .build();
 
     Ok(api)
-}
-
-fn setup_udp(ip: &str, password: &str) -> Arc<UdpSocket> {
-    let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-    let socket = Arc::new(socket);
-
-    let handshake_packet = Packet::Handshake {
-        password: password.into(),
-    };
-
-    let config = config::standard();
-
-    match bincode::serde::encode_to_vec(handshake_packet, config) {
-        Ok(encoded_packet) => {
-            socket.send_to(&encoded_packet, ip).ok();
-        }
-        Err(_) => panic!("Failed to encode handshake packet"),
-    };
-    socket
 }
