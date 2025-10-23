@@ -1,10 +1,8 @@
 use anyhow::Result;
-use bincode::config;
 use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use opus::Encoder;
-use protocol::Packet;
-use std::{net::UdpSocket, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use webrtc::{
@@ -32,13 +30,16 @@ pub enum CaptureError {
 
 /// Configurations for the audio capture stream
 pub struct CaptureConfig {
+    /// The WebRTC track to write captured audio samples to.
     pub track: Arc<TrackLocalStaticSample>,
+    /// Tokio handle
     pub tokio_handle: Handle,
-    /// Desired sample rate for the transmitioon
+    /// Desired sample rate for the transmission
     pub sample_rate: u32,
     /// Audio-Duration of a single packet
     pub snippet_duration: u32,
-    pub channels: u32,
+    /// Desired amount of channels
+    pub channels: u16,
 }
 
 pub struct Capture {
@@ -48,7 +49,6 @@ pub struct Capture {
 impl Capture {
     ///Creates a new Capture instance and starts the audio stream.
     pub fn new(config: CaptureConfig) -> Result<Self, CaptureError> {
-        // --- Setup cpal audio input ---
         let host = cpal::default_host();
         let device = host
             .default_input_device()
@@ -61,6 +61,7 @@ impl Capture {
             .find(|c| {
                 c.min_sample_rate().0 <= config.sample_rate
                     && c.max_sample_rate().0 >= config.sample_rate
+                    && c.channels() == config.channels
             })
             .ok_or(CaptureError::NoSupportedConfig)?;
 
@@ -69,7 +70,6 @@ impl Capture {
             .config();
         println!("Using input config {:?}", stream_config);
 
-        // --- Setup Opus Encoder ---
         let opus_channels = match stream_config.channels {
             1 => opus::Channels::Mono,
             2 => opus::Channels::Stereo,
@@ -78,7 +78,6 @@ impl Capture {
 
         let mut encoder = Encoder::new(config.sample_rate, opus_channels, opus::Application::Voip)?;
 
-        // --- Audio processing callbacks ---
         let samples_per_snippet =
             (stream_config.channels as u32 * config.sample_rate * config.snippet_duration / 1000)
                 as usize;
@@ -116,22 +115,10 @@ impl Capture {
                                 ..Default::default()
                             };
 
-                            if let Err(e) = track_clone.write_sample(&sample).await {}
+                            if let Err(e) = track_clone.write_sample(&sample).await {
+                                eprintln!("Failed to write sample on audio-track: {}", e);
+                            }
                         });
-
-                        // let voice_packet = Packet::Audio { data: compressed_data.to_vec() };
-                        //
-                        // match bincode::serde::encode_to_vec(voice_packet, config::standard()) {
-                        //     Ok(package) => {
-                        //         config.socket.send_to(&package, &config.remote_addr).ok();
-                        //     },
-                        //     Err(_) => println!("Failed to send voice package :("),
-                        // }
-
-                        // config
-                        //     .socket
-                        //     .send_to(compressed_data, &config.remote_addr)
-                        //     .ok();
                     }
                     Err(err) => eprintln!("Opus encoding error: {}", err),
                 }
