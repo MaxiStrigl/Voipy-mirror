@@ -1,15 +1,15 @@
 use anyhow::Result;
-use bincode::config;
+use cpal::traits::DeviceTrait;
 use cpal::traits::{HostTrait, StreamTrait};
-use cpal::traits::{DeviceTrait};
-use opus::{Decoder};
-use protocol::Packet;
+use opus::Decoder;
 use ringbuf::HeapRb;
 use ringbuf::traits::*;
-use std::{net::UdpSocket, sync::Arc};
+use std::sync::Arc;
 use thiserror::Error;
+use tokio::runtime::Handle;
+use webrtc::track::track_remote::TrackRemote;
 
-/// Custom error type for the capture library.
+/// Custom error type for the playback library.
 #[derive(Debug, Error)]
 pub enum PlaybackError {
     #[error("No default output device available")]
@@ -30,12 +30,14 @@ pub enum PlaybackError {
 
 /// Configurations for the audio playback stream
 pub struct PlaybackConfig {
-    /// Shared UDP sockert for receiving the audio data
-    pub socket: Arc<UdpSocket>,
-    /// Desired sample rate for the transmitioon
+    /// The WebRTC track from which to read audio samples.
+    pub track: Arc<TrackRemote>,
+    /// Desired sample rate for the output audio.
     pub sample_rate: u32,
-    /// Audio-Duration of a single packet
-    pub snippet_duration: u32,
+    /// Tokio handle for spawning the receiving task.
+    pub tokio_handle: Handle,
+    /// Number of Channels
+    pub channels: u32,
 }
 
 pub struct Playback {
@@ -45,7 +47,6 @@ pub struct Playback {
 impl Playback {
     /// Creates a new Playback instance and starts the audio stream.
     pub fn new(config: PlaybackConfig) -> Result<Self, PlaybackError> {
-        // --- Setup cpal audio output ---
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -68,7 +69,6 @@ impl Playback {
 
         println!("Using input config {:?}", stream_config);
 
-        // --- Setup Opus Encoder ---
         let opus_channels = match stream_config.channels {
             1 => opus::Channels::Mono,
             2 => opus::Channels::Stereo,
@@ -77,40 +77,33 @@ impl Playback {
 
         let mut decoder = Decoder::new(config.sample_rate, opus_channels)?;
 
-        // --- Setup Ring Buffer ----
         let ringbuffer = HeapRb::<f32>::new(48000);
         let (mut producer, mut consumer) = ringbuffer.split();
 
-        // --- Spawn receiving thread ---
-        std::thread::spawn(move || {
-            let mut receive_buffer = [0u8; 4096]; //4 KiB // just a guess
+        let track = config.track;
+
+        config.tokio_handle.spawn(async move {
             let mut opus_buffer = [0f32; 11520]; // 48000 Sample rate * 2 Channels * 0.120 ms (opus max)
 
             loop {
-                if let Ok((size, _)) = config.socket.recv_from(&mut receive_buffer) {
-                    let compressed = &receive_buffer[..size];
+                match track.read_rtp().await {
+                    Ok((packet, _)) => {
+                        let compressed = packet.payload;
 
-                    let compressed: Packet = bincode::serde::decode_from_slice(&compressed, config::standard()).unwrap().0;
-
-                    let compressed = match compressed {
-                        Packet::Handshake { .. } => continue,
-                        Packet::Audio { data } => data,
-                    };
-
-                    match decoder.decode_float(&compressed, &mut opus_buffer, false) {
-                        Ok(num_decoded_samples_per_channel) => {
-                            let total_samples =
-                                num_decoded_samples_per_channel * stream_config.channels as usize;
-
-                            producer.push_slice(&opus_buffer[..total_samples]);
+                        match decoder.decode_float(&compressed, &mut opus_buffer, false) {
+                            Ok(num_decoded_samples_per_channel) => {
+                                let total_samples =
+                                    num_decoded_samples_per_channel * config.channels as usize;
+                                producer.push_slice(&opus_buffer[..total_samples]);
+                            }
+                            Err(_) => todo!(),
                         }
-                        Err(e) => eprintln!("Opus decoding error: {}", e),
                     }
+                    Err(_) => todo!(),
                 }
             }
         });
 
-        // --- Audio processing callbacks ---
         let output_callback = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             for sample in data.iter_mut() {
                 *sample = match consumer.try_pop() {
@@ -121,12 +114,13 @@ impl Playback {
         };
 
         let error_callback = |err| {
-            eprintln!("An error occured in the input stream: {}", err);
+            eprintln!("An error occured in the output stream: {}", err);
         };
 
-        let stream = device.build_output_stream(&stream_config, output_callback, error_callback, None)?;
+        let stream =
+            device.build_output_stream(&stream_config, output_callback, error_callback, None)?;
         stream.play().unwrap();
 
-        Ok(Self {_stream: stream})
+        Ok(Self { _stream: stream })
     }
 }

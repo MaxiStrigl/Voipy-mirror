@@ -5,7 +5,7 @@ members = [
   "crates/protocol",
   "crates/audio_capture",
   "crates/audio_playback"
-]
+, "crates/signaling_server"]
 resolver = "3"
 
 
