@@ -1,3 +1,5 @@
+#![recursion_limit = "123"]
+
 use anyhow::Result;
 use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -8,6 +10,7 @@ use tokio::runtime::Handle;
 use webrtc::{
     media::Sample, track::track_local::track_local_static_sample::TrackLocalStaticSample,
 };
+
 
 /// Custom error type for the capture library.
 #[derive(Debug, Error)]
