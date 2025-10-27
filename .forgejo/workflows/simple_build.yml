@@ -1,0 +1,31 @@
+
+on: [push]
+
+jobs:
+  build-linux:
+    runs-on: docker
+    container: 
+      image: rust:latest
+    steps:
+      - name: Checkout Code
+        uses: https://github.com/actions/checkout@v4
+
+      - name: Build client 
+        run: cargo build --release --package client
+
+      - name: Build signaling_server
+        run: cargo build --release --package signaling_server
+
+      - name: Upload client artifact
+        uses: https://github.com/actions/upload-artifact@v4
+        with:
+          name: client-linux
+          path: target/release/client
+          if-no-files-found: error
+
+      - name: Upload client artifact
+        uses: https://github.com/actions/upload-artifact@v4
+        with:
+          name: signaling_server
+          path: target/release/signaling_server
+          if-no-files-found: error
