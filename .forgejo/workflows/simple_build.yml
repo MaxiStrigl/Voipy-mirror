@@ -6,10 +6,10 @@ jobs:
     container: 
       image: rust:latest
     steps:
-      - name: Install Node.js
+      - name: Install Dependencies (Node, libasound2-dev, cmake)
         run: |
           apt-get update
-          apt-get install -y curl ca-certificates libasound2-dev
+          apt-get install -y curl ca-certificates libasound2-dev cmake
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y nodejs
 
