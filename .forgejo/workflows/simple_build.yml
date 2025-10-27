@@ -2,16 +2,19 @@ on: [push]
 
 jobs:
   build-linux:
-    runs-on: ubunut-latest
-
+    runs-on: docker
+    container: 
+      image: rust:latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Install Node.js
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y nodejs
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+      - name: Checkout Code
+        uses: https://github.com/actions/checkout@v4
 
       - name: Build client 
         run: cargo build --release --package client
@@ -26,7 +29,7 @@ jobs:
           path: target/release/client
           if-no-files-found: error
 
-      - name: Upload signaling_server artifact
+      - name: Upload client artifact
         uses: https://github.com/actions/upload-artifact@v4
         with:
           name: signaling_server
