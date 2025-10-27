@@ -1,0 +1,40 @@
+on: 
+  push:
+    branches:
+      - main
+
+jobs:
+  build-linux:
+    runs-on: docker
+    container: 
+      image: rust:latest
+    steps:
+      - name: Install Dependencies (Node, libasound2-dev, cmake)
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates libasound2-dev cmake
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y nodejs
+
+      - name: Checkout Code
+        uses: https://github.com/actions/checkout@v3
+
+      - name: Build client 
+        run: cargo build --release --package client
+
+      - name: Build signaling_server
+        run: cargo build --release --package signaling_server
+
+      - name: Upload client artifact
+        uses: https://github.com/actions/upload-artifact@v3
+        with:
+          name: client-linux
+          path: target/release/client
+          if-no-files-found: error
+
+      - name: Upload signaling_server artifact
+        uses: https://github.com/actions/upload-artifact@v3
+        with:
+          name: signaling_server
+          path: target/release/signaling_server
+          if-no-files-found: error
