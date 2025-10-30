@@ -616,9 +616,17 @@ checksum = "2a2330da5de22e8a3cb63252ce2abb30116bf5265e89c0e01bc17015ce30a476"
 name = "deamon"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "audio_capture",
+ "audio_playback",
  "deamon-protocol",
+ "futures-util",
+ "serde",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "tonic",
+ "webrtc",
 ]
 
 [[package]]
