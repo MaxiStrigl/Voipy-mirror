@@ -1,32 +1,30 @@
-mod call;
+mod webrtc_manager;
 
-use core::sync;
 use std::sync::{Arc, Mutex};
 
 use deamon_protocol::voicechat::{
     voicechat_deamon_server::{VoicechatDeamon, VoicechatDeamonServer},
     *,
 };
-use tokio::sync::watch::{self, Receiver, Sender};
+use tokio::sync::{
+    mpsc,
+    watch::{self, Receiver, Sender},
+};
 use tokio::task::JoinHandle;
 use tonic::{Request, Response, transport::Server};
 
+use webrtc_manager::Command;
+use webrtc_manager::run_call;
 
-struct CallState {
-    handle: JoinHandle<()>,
-    stop_sender: Sender<&'static str>
-}
-
+use crate::webrtc_manager::WebRtcManager;
 
 pub struct VoiceChatService {
-    call_state: Arc<Mutex<Option<CallState>>>,
+    command_sender: mpsc::Sender<Command>,
 }
 
 impl VoiceChatService {
-    fn new() -> Self{
-        Self {
-            call_state: Arc::new(Mutex::new(None))
-        }
+    fn new(command_sender: mpsc::Sender<Command>) -> Self {
+        Self { command_sender }
     }
 }
 
@@ -36,30 +34,18 @@ impl VoicechatDeamon for VoiceChatService {
         &self,
         request: Request<StartRequest>,
     ) -> Result<Response<StartResponse>, tonic::Status> {
-        let mut state = self.call_state.lock().unwrap();
-
-        if state.is_some() {
-            return Err(tonic::Status::failed_precondition("Call already in progress"));
-        }
-
         let req = request.into_inner();
-        let server_ip = req.server_ip;
-        let is_caller = true;
 
         println!(
             "gRPC: Received Start Request with server_ip: {}",
-            server_ip
+            req.server_ip
         );
 
-        let (tx, mut rx) = watch::channel("stop_call");
-
-        let handle = tokio::spawn(async move {
-            if let Err(e) = call::run_call(server_ip, is_caller, rx).await {
-                eprintln!("Call failed: {}", e);
-            }
-        });
-
-        *state = Some(CallState {handle, stop_sender: tx} );
+        if self.command_sender.send(Command::StartCall).await.is_err() {
+            return Err(tonic::Status::internal(
+                "Failed to send start command to WebRTC manager",
+            ));
+        }
 
         Ok(Response::new(StartResponse {}))
     }
@@ -69,6 +55,12 @@ impl VoicechatDeamon for VoiceChatService {
         _request: Request<StopRequest>,
     ) -> Result<Response<StopResponse>, tonic::Status> {
         println!("gRPC: Received Stop request");
+
+        if self.command_sender.send(Command::StopCall).await.is_err() {
+            return Err(tonic::Status::internal(
+                "Failed to send stop command to WebRTC manager",
+            ));
+        }
 
         Ok(Response::new(StopResponse {}))
     }
@@ -82,9 +74,7 @@ impl VoicechatDeamon for VoiceChatService {
             error_message: "".to_string(),
         };
 
-        println!(
-            "gRPC: Received GetStatus request"
-        );
+        println!("gRPC: Received GetStatus request");
 
         Ok(Response::new(reply))
     }
@@ -93,7 +83,19 @@ impl VoicechatDeamon for VoiceChatService {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::1]:40001".parse()?;
-    let deamon = VoiceChatService::new();
+
+    let signaling_server = "0.0.0.0";
+
+    let (tx, rx) = mpsc::channel(10);
+
+    tokio::spawn(async move {
+        let mut manager = WebRtcManager::new(rx, signaling_server.to_string());
+        if let Err(e) = manager.run().await {
+            eprintln!("WebRtc Manager failed: {}", e);
+        }
+    });
+
+    let deamon = VoiceChatService::new(tx);
 
     println!("Daemon listening on {}", addr);
 
