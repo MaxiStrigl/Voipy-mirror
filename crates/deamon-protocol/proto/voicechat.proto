@@ -11,9 +11,7 @@ service VoicechatDeamon {
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
 }
 
-message StartRequest {
-  string server_ip = 1;
-}
+message StartRequest {}
 
 message StartResponse {}
 

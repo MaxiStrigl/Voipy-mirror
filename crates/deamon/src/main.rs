@@ -34,12 +34,7 @@ impl VoicechatDeamon for VoiceChatService {
         &self,
         request: Request<StartRequest>,
     ) -> Result<Response<StartResponse>, tonic::Status> {
-        let req = request.into_inner();
-
-        println!(
-            "gRPC: Received Start Request with server_ip: {}",
-            req.server_ip
-        );
+        println!("gRPC: Received Start Call");
 
         if self.command_sender.send(Command::StartCall).await.is_err() {
             return Err(tonic::Status::internal(
