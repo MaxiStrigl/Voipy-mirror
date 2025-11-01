@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::Arc,
 };
 
 use futures_util::{stream::SplitSink, SinkExt, StreamExt};
@@ -12,8 +12,6 @@ use warp::{
 };
 
 type Clients = Arc<Mutex<HashMap<usize, SplitSink<WebSocket, Message>>>>;
-
-static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[tokio::main]
 async fn main() {
@@ -34,14 +32,24 @@ async fn main() {
 
 /// Handles the new Client websocket connection (For now only 2 clients)
 async fn handle_client_connection(websocket: WebSocket, clients: Clients) {
-    let client_id = NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    println!("Client {} connected", client_id);
-
+    let client_id: usize;
     let (sender, mut receiver) = websocket.split();
 
     {
-        clients.lock().await.insert(client_id, sender);
+        let mut clients_guard = clients.lock().await;
+        if clients_guard.len() >= 2 {
+            println!("Server is full, rejecting new client");
+            return;
+        }
+
+        client_id = if clients_guard.get(&1).is_none() {
+            1
+        } else {
+            2
+        };
+        clients_guard.insert(client_id, sender);
     }
+    println!("Client {} connected", client_id);
 
     while let Some(result) = receiver.next().await {
         let msg = match result {
@@ -53,11 +61,8 @@ async fn handle_client_connection(websocket: WebSocket, clients: Clients) {
         };
 
         if msg.is_text() {
-            //WARNING: This Assumes only two clients will ever connect
-            let receiver_id = if client_id == 1 {2} else if client_id == 2 {1} else {break}; 
+            let receiver_id = if client_id == 1 { 2 } else { 1 };
 
-            // lock the list and forward message
-            
             let mut lock_guard = clients.lock().await;
 
             if let Some(receiver_sink) = lock_guard.get_mut(&receiver_id) {
@@ -76,4 +81,7 @@ async fn handle_client_connection(websocket: WebSocket, clients: Clients) {
             break;
         }
     }
+
+    clients.lock().await.remove(&client_id);
+    println!("Client {} disconnected", client_id);
 }
