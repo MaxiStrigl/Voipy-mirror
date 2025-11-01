@@ -17,3 +17,4 @@ webrtc = "0.14.0"
 
 audio_capture = { path = "../audio_capture/" }
 audio_playback = { path = "../audio_playback/" }
+clap = { version = "4.5.51", features = ["derive"] }

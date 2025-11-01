@@ -1,6 +1,7 @@
 mod webrtc_manager;
 
 use crate::webrtc_manager::WebRtcManager;
+use clap::Parser;
 use deamon_protocol::voicechat::{voicechat_deamon_server::{VoicechatDeamon, VoicechatDeamonServer}, GetStatusRequest, GetStatusResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse};
 use tokio::sync::{broadcast::channel, mpsc, watch};
 use tonic::{Request as TonicRequest, Response, transport::Server};
@@ -15,6 +16,13 @@ impl VoiceChatService {
     fn new(command_sender: mpsc::Sender<Command>, shutdown_sender: watch::Sender<()>) -> Self {
         Self { command_sender,  shutdown_sender}
     }
+}
+
+#[derive(Parser, Debug)]
+#[command(version, about)]
+struct Cli {
+    #[arg(long)]
+    signaling_ip: String
 }
 
 #[tonic::async_trait]
@@ -84,15 +92,14 @@ impl VoicechatDeamon for VoiceChatService {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
     let addr = "[::1]:40001".parse()?;
-
-    let signaling_server = "0.0.0.0";
 
     let (command_sender, command_receiver) = mpsc::channel(10);
     let (shutdown_sender, mut shutdown_receiver) = watch::channel(());
 
     tokio::spawn(async move {
-        let mut manager = WebRtcManager::new(command_receiver, signaling_server.to_string());
+        let mut manager = WebRtcManager::new(command_receiver, cli.signaling_ip);
         if let Err(e) = manager.run().await {
             eprintln!("WebRtc Manager failed: {}", e);
         }

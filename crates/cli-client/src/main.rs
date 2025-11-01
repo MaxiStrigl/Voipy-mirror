@@ -121,7 +121,7 @@ async fn start_deamon(signaling_ip: &str) -> Result<()> {
                 "--package",
                 "deamon",
                 "--",
-                "--signaling_ip",
+                "--signaling-ip",
                 signaling_ip,
             ])
             .stdout(Stdio::null())
