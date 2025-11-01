@@ -9,17 +9,20 @@ service VoicechatDeamon {
   rpc Stop(StopRequest) returns (StopResponse);
 
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+
 }
 
 message StartRequest {}
 
 message StartResponse {}
 
-message StopRequest{}
+message StopRequest {}
 
-message StopResponse{}
+message StopResponse {}
 
-message GetStatusRequest{}
+message GetStatusRequest {}
 
 message GetStatusResponse{
   enum Status {
@@ -31,3 +34,8 @@ message GetStatusResponse{
   Status status = 1;
   string error_message = 2;
 }
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}
+

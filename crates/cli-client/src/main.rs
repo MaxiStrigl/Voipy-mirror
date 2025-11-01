@@ -3,7 +3,7 @@ use std::{env, process::Stdio, time::Duration};
 use anyhow::Result;
 use clap::{Command, Parser, Subcommand};
 use deamon_protocol::voicechat::{
-    StartRequest, StopRequest, voicechat_deamon_client::VoicechatDeamonClient,
+    voicechat_deamon_client::VoicechatDeamonClient, ShutdownRequest, StartRequest, StopRequest
 };
 
 use std::process::Command as StdCommand;
@@ -145,6 +145,7 @@ async fn start_deamon(signaling_ip: &str) -> Result<()> {
     Ok(())
 }
 
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -157,7 +158,16 @@ async fn main() -> Result<()> {
                 }
             }
             DeamonCommands::Stop {} => {
-                eprintln!("Bro do it yourself. Use btop, killall or some shit.");
+                if is_deamon_running().await {
+                    let request = tonic::Request::new(ShutdownRequest {});
+                    println!("Sending deamon shutdown request");
+                    let mut client = VoicechatDeamonClient::connect("http://[::1]:40001").await?;
+                    println!("Shutdown deamon");
+                    client.shutdown(request).await?;
+                }
+                else {
+                    println!("Deamon is already dead.");
+                }
                 return Ok(());
             }
         }

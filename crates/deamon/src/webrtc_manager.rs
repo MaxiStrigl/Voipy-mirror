@@ -40,6 +40,7 @@ use webrtc::{
 pub enum Command {
     StartCall,
     StopCall,
+    Shutdown,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -102,8 +103,12 @@ impl WebRtcManager {
                 Ok((ws_stream, _)) => {
                     println!("Connected to signaling server.");
                     let (ws_sender, ws_receiver) = ws_stream.split();
-                    if let Err(e) = self.handle_connection(ws_sender, ws_receiver, &api).await {
-                        eprintln!("Connection handle error: {}. Reconnecting ...", e);
+
+                    if self.handle_connection(ws_sender, ws_receiver, &api).await.is_ok(){
+                        println!("WebRtcManager shutting down gracefully.");
+                        break;
+                    } else {
+                        eprintln!("Connection error. Reconnecting ...");
                     }
                 }
                 Err(e) => {
@@ -116,6 +121,8 @@ impl WebRtcManager {
                 }
             }
         }
+
+        Ok(())
     }
 
     async fn create_webrtc_components(
@@ -170,39 +177,36 @@ impl WebRtcManager {
             tokio::select! {
             Some(command) = self.command_receiver.recv() => {
                 match command {
-                    Command::StartCall => {
+                    Command::StartCall=>{
                         if active_call {
                             println!("Warning: Received StartCall while another call is already active");
                             continue;
                         }
-
-                        active_call = true;
-
+                        active_call=true;
                         println!("Initiating call...");
-
-                        let offer = peer_connection.create_offer(None).await?;
+                        let offer=peer_connection.create_offer(None).await?;
                         let offer_sdp = offer.sdp.clone();
-
                         peer_connection.set_local_description(offer).await?;
-
                         let offer_msg = SignalMessage::Offer(offer_sdp);
                         let json_msg = serde_json::to_string(&offer_msg)?;
                         println!("-> Sending Offer");
                         ws_sender.send(Message::Text(json_msg.into())).await?;
                     },
-                    Command::StopCall => {
+                    Command::StopCall =>{
                         println!("Stopping call...");
                         peer_connection.close().await?;
                         active_call = false;
-
-                        // Create new peer connection for next call
                         (peer_connection, ..) = self.create_webrtc_components(api).await?;
-
                         println!("Call stopped. Ready for next");
+                    },
+                    Command::Shutdown => { 
+                        println!("Shutting down deamon"); 
+                        peer_connection.close().await?;
+                        ws_sender.send(Message::Close(None)).await?;
+                        break;
                     },
                 }
             }
-
 
             Some (candidate) = candidate_receiver.recv() => {
                 let msg = SignalMessage::Candidate(candidate);
