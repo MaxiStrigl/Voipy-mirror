@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package voicechat;
+
+service VoicechatDaemon {
+  
+  rpc Start(StartRequest) returns (StartResponse);
+
+  rpc Stop(StopRequest) returns (StopResponse);
+
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+
+}
+
+message StartRequest {}
+
+message StartResponse {}
+
+message StopRequest {}
+
+message StopResponse {}
+
+message GetStatusRequest {}
+
+message GetStatusResponse{
+  enum Status {
+    Stopped = 0;
+    Connecting = 1;
+    Connected = 2;
+    Error = 3;
+  }
+  Status status = 1;
+  string error_message = 2;
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}
+
