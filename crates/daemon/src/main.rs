@@ -2,7 +2,7 @@ mod webrtc_manager;
 
 use crate::webrtc_manager::WebRtcManager;
 use clap::Parser;
-use deamon_protocol::voicechat::{voicechat_deamon_server::{VoicechatDeamon, VoicechatDeamonServer}, GetStatusRequest, GetStatusResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse};
+use daemon_protocol::voicechat::{voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer}, GetStatusRequest, GetStatusResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse};
 use tokio::sync::{broadcast::channel, mpsc, watch};
 use tonic::{Request as TonicRequest, Response, transport::Server};
 use webrtc_manager::Command;
@@ -26,7 +26,7 @@ struct Cli {
 }
 
 #[tonic::async_trait]
-impl VoicechatDeamon for VoiceChatService {
+impl VoicechatDaemon for VoiceChatService {
     async fn start(
         &self,
         _: TonicRequest<StartRequest>,
@@ -105,12 +105,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let deamon = VoiceChatService::new(command_sender, shutdown_sender);
+    let daemon = VoiceChatService::new(command_sender, shutdown_sender);
 
     println!("Daemon listening on {}", addr);
 
     Server::builder()
-        .add_service(VoicechatDeamonServer::new(deamon))
+        .add_service(VoicechatDaemonServer::new(daemon))
         .serve_with_shutdown(addr, async {
             shutdown_receiver.changed().await.ok();
             println!("gRPC server shutting down");

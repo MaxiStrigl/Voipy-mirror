@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package voicechat;
 
-service VoicechatDeamon {
+service VoicechatDaemon {
   
   rpc Start(StartRequest) returns (StartResponse);
 

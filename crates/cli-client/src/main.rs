@@ -1,14 +1,12 @@
 use std::{env, process::Stdio, time::Duration};
 
 use anyhow::Result;
-use clap::{Command, Parser, Subcommand};
-use deamon_protocol::voicechat::{
-    voicechat_deamon_client::VoicechatDeamonClient, ShutdownRequest, StartRequest, StopRequest
+use clap::{Parser, Subcommand};
+use daemon_protocol::voicechat::{
+    voicechat_daemon_client::VoicechatDaemonClient, ShutdownRequest, StartRequest, StopRequest
 };
 
 use std::process::Command as StdCommand;
-
-async fn start_or_connect_to_deamon() {}
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -21,7 +19,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum DeamonCommands {
+enum DaemonCommands {
     Start {
         #[arg(long)]
         signaling_ip: String,
@@ -43,22 +41,22 @@ enum Commands {
     /// Get Status
     #[command(alias = "call-status")]
     Status,
-    /// Manage Deamon
+    /// Manage Daemon
     Daemon {
         #[command(subcommand)]
-        command: DeamonCommands,
+        command: DaemonCommands,
     },
 }
 
-async fn is_deamon_running() -> bool {
-    VoicechatDeamonClient::connect("http://[::1]:40001")
+async fn is_daemon_running() -> bool {
+    VoicechatDaemonClient::connect("http://[::1]:40001")
         .await
         .is_ok()
 }
 
 async fn handle_command(
     command: Commands,
-    client: &mut VoicechatDeamonClient<tonic::transport::Channel>,
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
 ) -> Result<()> {
     match command {
         Commands::Start { .. } => {
@@ -80,13 +78,13 @@ async fn handle_command(
     Ok(())
 }
 
-async fn start_deamon(signaling_ip: &str) -> Result<()> {
-    println!("Attempting to start deamon");
+async fn start_daemon(signaling_ip: &str) -> Result<()> {
+    println!("Attempting to start daemon");
 
     let args = ["--signaling-ip", signaling_ip];
-    let mut deamon_started = false;
+    let mut daemon_started = false;
 
-    let binary_name = format!("deamon{}", env::consts::EXE_SUFFIX);
+    let binary_name = format!("daemon{}", env::consts::EXE_SUFFIX);
     let binary_path_cwd = format!(".{}{}", std::path::MAIN_SEPARATOR, binary_name);
 
     // Try path first
@@ -97,11 +95,11 @@ async fn start_deamon(signaling_ip: &str) -> Result<()> {
         .spawn()
         .is_ok()
     {
-        println!("Started deamon from PATH");
-        deamon_started = true;
+        println!("Started daemon from PATH");
+        daemon_started = true;
     }
 
-    if !deamon_started {
+    if !daemon_started {
         if StdCommand::new(&binary_path_cwd)
             .args(args)
             .stdout(Stdio::null())
@@ -109,17 +107,17 @@ async fn start_deamon(signaling_ip: &str) -> Result<()> {
             .spawn()
             .is_ok()
         {
-            println!("Started deamon from cwd");
-            deamon_started = true;
+            println!("Started daemon from cwd");
+            daemon_started = true;
         }
     }
 
-    if !deamon_started {
+    if !daemon_started {
         if StdCommand::new("cargo")
             .args(&[
                 "run",
                 "--package",
-                "deamon",
+                "daemon",
                 "--",
                 "--signaling-ip",
                 signaling_ip,
@@ -129,14 +127,14 @@ async fn start_deamon(signaling_ip: &str) -> Result<()> {
             .spawn()
             .is_ok()
         {
-            println!("Started deamon using cargo.");
-            deamon_started = true;
+            println!("Started daemon using cargo.");
+            daemon_started = true;
         }
     }
 
-    if !deamon_started {
+    if !daemon_started {
         return Err(anyhow::anyhow!(
-            "Couldn't start deamon using any method (PATH, cwd, cargo)"
+            "Couldn't start daemon using any method (PATH, cwd, cargo)"
         ));
     }
 
@@ -152,21 +150,21 @@ async fn main() -> Result<()> {
 
     if let Some(Commands::Daemon { command }) = &cli.command {
         match command {
-            DeamonCommands::Start { signaling_ip } => {
-                if !is_deamon_running().await {
-                    start_deamon(signaling_ip).await?;
+            DaemonCommands::Start { signaling_ip } => {
+                if !is_daemon_running().await {
+                    start_daemon(signaling_ip).await?;
                 }
             }
-            DeamonCommands::Stop {} => {
-                if is_deamon_running().await {
+            DaemonCommands::Stop {} => {
+                if is_daemon_running().await {
                     let request = tonic::Request::new(ShutdownRequest {});
-                    println!("Sending deamon shutdown request");
-                    let mut client = VoicechatDeamonClient::connect("http://[::1]:40001").await?;
-                    println!("Shutdown deamon");
+                    println!("Sending daemon shutdown request");
+                    let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
+                    println!("Shutdown daemon");
                     client.shutdown(request).await?;
                 }
                 else {
-                    println!("Deamon is already dead.");
+                    println!("Daemon is already dead.");
                 }
                 return Ok(());
             }
@@ -174,8 +172,8 @@ async fn main() -> Result<()> {
     };
 
     if let Some(Commands::Start { ip }) = &cli.command {
-        if !is_deamon_running().await && ip.is_some() {
-            start_deamon(&ip.clone().unwrap()).await?;
+        if !is_daemon_running().await && ip.is_some() {
+            start_daemon(&ip.clone().unwrap()).await?;
         }
     }
 
@@ -184,11 +182,11 @@ async fn main() -> Result<()> {
         println!("Just kidding. Imagine Maxi really did that. lol");
         return Ok(());
     } else if cli.command.is_some() {
-        if !is_deamon_running().await {
-            eprintln!("Deamon not started. START IT PLS. BECAUSE I CAN'T. THX FOR NOTHING MAXI");
+        if !is_daemon_running().await {
+            eprintln!("Daemon not started. START IT PLS. BECAUSE I CAN'T. THX FOR NOTHING MAXI");
         }
 
-        let mut client = VoicechatDeamonClient::connect("http://[::1]:40001").await?;
+        let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
 
         handle_command(cli.command.unwrap(), &mut client).await?;
     };

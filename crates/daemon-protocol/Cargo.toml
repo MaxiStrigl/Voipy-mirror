@@ -1,5 +1,5 @@
 [package]
-name = "deamon-protocol"
+name = "daemon-protocol"
 version = "0.1.0"
 edition = "2024"
 

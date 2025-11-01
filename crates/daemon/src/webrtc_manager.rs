@@ -200,7 +200,7 @@ impl WebRtcManager {
                         println!("Call stopped. Ready for next");
                     },
                     Command::Shutdown => { 
-                        println!("Shutting down deamon"); 
+                        println!("Shutting down daemon"); 
                         peer_connection.close().await?;
                         ws_sender.send(Message::Close(None)).await?;
                         break;
