@@ -77,7 +77,7 @@ impl Playback {
 
         let mut decoder = Decoder::new(config.sample_rate, opus_channels)?;
 
-        let ringbuffer = HeapRb::<f32>::new(48000);
+        let ringbuffer = HeapRb::<f32>::new(9600);
         let (mut producer, mut consumer) = ringbuffer.split();
 
         let track = config.track;
