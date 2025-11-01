@@ -31,7 +31,7 @@ jobs:
       - name: Upload deamon artifact
         uses: https://github.com/actions/upload-artifact@v3
         with:
-          name: daeom 
+          name: daemom 
           path: target/release/daemon
           if-no-files-found: error
 

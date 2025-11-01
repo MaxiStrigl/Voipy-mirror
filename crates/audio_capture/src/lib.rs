@@ -1,5 +1,3 @@
-#![recursion_limit = "123"]
-
 use anyhow::Result;
 use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -7,10 +5,10 @@ use opus::Encoder;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::runtime::Handle;
+use tokio::sync::mpsc;
 use webrtc::{
     media::Sample, track::track_local::track_local_static_sample::TrackLocalStaticSample,
 };
-
 
 /// Custom error type for the capture library.
 #[derive(Debug, Error)]
@@ -93,9 +91,25 @@ impl Capture {
         let mut audio_buffer: Vec<f32> = Vec::new();
         let mut opus_buffer = vec![0u8; 4096];
 
+        let (audio_sender, mut audio_receiver) = mpsc::unbounded_channel::<Vec<u8>>();
         let track = config.track;
-        let handle = config.tokio_handle;
-        let snippet_duration = Duration::from_millis(20);
+        let snippet_duration_ms = config.snippet_duration;
+
+        config.tokio_handle.spawn(async move {
+            let snippet_duration = Duration::from_millis(snippet_duration_ms as u64);
+
+            while let Some(data_copy) = audio_receiver.recv().await {
+                let sample = Sample {
+                    data: data_copy.into(),
+                    duration: snippet_duration,
+                    ..Default::default()
+                };
+
+                if let Err(e) = track.write_sample(&sample).await {
+                    eprintln!("Failed to write sample on audio-track: {}", e);
+                }
+            }
+        });
 
         let input_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
             audio_buffer.extend_from_slice(data);
@@ -106,22 +120,9 @@ impl Capture {
                 match encoder.encode_float(chunk, &mut opus_buffer) {
                     Ok(compressed_size) => {
                         let compressed_data = &opus_buffer[..compressed_size];
-
-                        let track_clone = track.clone();
-
-                        let data_copy = compressed_data.to_vec();
-
-                        handle.spawn(async move {
-                            let sample = Sample {
-                                data: data_copy.into(),
-                                duration: snippet_duration,
-                                ..Default::default()
-                            };
-
-                            if let Err(e) = track_clone.write_sample(&sample).await {
-                                eprintln!("Failed to write sample on audio-track: {}", e);
-                            }
-                        });
+                        if let Err(e) = audio_sender.send(compressed_data.to_vec()) {
+                            eprintln!("Failed to send audio packet to channel: {}", e);
+                        }
                     }
                     Err(err) => eprintln!("Opus encoding error: {}", err),
                 }
