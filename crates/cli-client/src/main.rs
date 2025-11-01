@@ -1,6 +1,12 @@
+use std::{env, process::Stdio, time::Duration};
+
 use anyhow::Result;
-use clap::{Parser, Subcommand};
-use deamon_protocol::voicechat::{voicechat_deamon_client::VoicechatDeamonClient, StartRequest, StopRequest};
+use clap::{Command, Parser, Subcommand};
+use deamon_protocol::voicechat::{
+    StartRequest, StopRequest, voicechat_deamon_client::VoicechatDeamonClient,
+};
+
+use std::process::Command as StdCommand;
 
 async fn start_or_connect_to_deamon() {}
 
@@ -27,10 +33,15 @@ enum DeamonCommands {
 enum Commands {
     #[command(alias = "call-start")]
     /// Starts a new call
-    Start,
+    Start {
+        #[arg(long)]
+        ip: Option<String>,
+    },
     /// Stop a call
+    #[command(alias = "call-stop")]
     Stop,
     /// Get Status
+    #[command(alias = "call-status")]
     Status,
     /// Manage Deamon
     Daemon {
@@ -50,7 +61,7 @@ async fn handle_command(
     client: &mut VoicechatDeamonClient<tonic::transport::Channel>,
 ) -> Result<()> {
     match command {
-        Commands::Start => {
+        Commands::Start { .. } => {
             let request = tonic::Request::new(StartRequest {});
             println!("Sending start request...");
             let response = client.start(request).await;
@@ -69,6 +80,71 @@ async fn handle_command(
     Ok(())
 }
 
+async fn start_deamon(signaling_ip: &str) -> Result<()> {
+    println!("Attempting to start deamon");
+
+    let args = ["--signaling-ip", signaling_ip];
+    let mut deamon_started = false;
+
+    let binary_name = format!("deamon{}", env::consts::EXE_SUFFIX);
+    let binary_path_cwd = format!(".{}{}", std::path::MAIN_SEPARATOR, binary_name);
+
+    // Try path first
+    if StdCommand::new(&binary_name)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+    {
+        println!("Started deamon from PATH");
+        deamon_started = true;
+    }
+
+    if !deamon_started {
+        if StdCommand::new(&binary_path_cwd)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            println!("Started deamon from cwd");
+            deamon_started = true;
+        }
+    }
+
+    if !deamon_started {
+        if StdCommand::new("cargo")
+            .args(&[
+                "run",
+                "--package",
+                "deamon",
+                "--",
+                "--signaling_ip",
+                signaling_ip,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            println!("Started deamon using cargo.");
+            deamon_started = true;
+        }
+    }
+
+    if !deamon_started {
+        return Err(anyhow::anyhow!(
+            "Couldn't start deamon using any method (PATH, cwd, cargo)"
+        ));
+    }
+
+    tokio::time::sleep(Duration::from_secs(4)).await;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -77,12 +153,8 @@ async fn main() -> Result<()> {
         match command {
             DeamonCommands::Start { signaling_ip } => {
                 if !is_deamon_running().await {
-                    eprintln!(
-                        "Deamon not started. START IT PLS. BECAUSE I CAN'T. THX FOR NOTHING MAXI"
-                    );
-                    return Ok(());
+                    start_deamon(signaling_ip).await?;
                 }
-                return Ok(());
             }
             DeamonCommands::Stop {} => {
                 eprintln!("Bro do it yourself. Use btop, killall or some shit.");
@@ -90,6 +162,12 @@ async fn main() -> Result<()> {
             }
         }
     };
+
+    if let Some(Commands::Start { ip }) = &cli.command {
+        if !is_deamon_running().await && ip.is_some() {
+            start_deamon(&ip.clone().unwrap()).await?;
+        }
+    }
 
     if cli.interactive {
         println!("Entering interactive mode. Type 'help' for commands, 'exit' to quit");
