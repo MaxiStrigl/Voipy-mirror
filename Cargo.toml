@@ -1,11 +1,12 @@
 [workspace]
 members = [
-  "crates/client",
-  "crates/server",
   "crates/protocol",
   "crates/audio_capture",
-  "crates/audio_playback"
-, "crates/signaling_server", "crates/daemon", "crates/cli-client", "crates/daemon-protocol"]
+  "crates/audio_playback", 
+  "crates/signaling_server", 
+  "crates/daemon", 
+  "crates/cli-client", 
+  "crates/daemon-protocol"]
 resolver = "3"
 
 

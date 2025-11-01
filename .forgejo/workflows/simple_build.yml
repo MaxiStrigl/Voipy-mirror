@@ -9,27 +9,37 @@ jobs:
     container: 
       image: rust:latest
     steps:
-      - name: Install Dependencies (Node, libasound2-dev, cmake)
+      - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf)
         run: |
           apt-get update
-          apt-get install -y curl ca-certificates libasound2-dev cmake
+          apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y nodejs
 
       - name: Checkout Code
         uses: https://github.com/actions/checkout@v3
 
-      - name: Build client 
-        run: cargo build --release --package client
+      - name: Build daemon 
+        run: cargo build --release --package daemon 
+
+      - name: Build cli-client 
+        run: cargo build --release --package cli-client 
 
       - name: Build signaling_server
         run: cargo build --release --package signaling_server
 
-      - name: Upload client artifact
+      - name: Upload deamon artifact
         uses: https://github.com/actions/upload-artifact@v3
         with:
-          name: client-linux
-          path: target/release/client
+          name: daeom 
+          path: target/release/daemon
+          if-no-files-found: error
+
+      - name: Upload cli-client artifact
+        uses: https://github.com/actions/upload-artifact@v3
+        with:
+          name: cli-client
+          path: target/release/cli-client
           if-no-files-found: error
 
       - name: Upload signaling_server artifact
