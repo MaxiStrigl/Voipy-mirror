@@ -11,6 +11,9 @@ use std::process::Command as StdCommand;
 #[derive(Parser)]
 #[command(version, about)]
 struct Cli {
+    #[arg(long, global = true, default_value_t = 40001)]
+    port: u16,
+
     #[command(subcommand)]
     command: Option<Commands>,
 
@@ -186,7 +189,7 @@ async fn main() -> Result<()> {
             eprintln!("Daemon not started. START IT PLS. BECAUSE I CAN'T. THX FOR NOTHING MAXI");
         }
 
-        let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
+        let mut client = VoicechatDaemonClient::connect(format!("http://[::1]:{}", cli.port)).await?;
 
         handle_command(cli.command.unwrap(), &mut client).await?;
     };

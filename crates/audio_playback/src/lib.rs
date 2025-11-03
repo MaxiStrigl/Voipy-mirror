@@ -96,10 +96,15 @@ impl Playback {
                                     num_decoded_samples_per_channel * config.channels as usize;
                                 producer.push_slice(&opus_buffer[..total_samples]);
                             }
-                            Err(_) => todo!(),
+                            Err(e) => {
+                                eprintln!("Failed to decode opus packet: {}", e);
+                            }
                         }
                     }
-                    Err(_) => todo!(),
+                    Err(e) => {
+                        println!("RTP track read finished: {}", e);
+                        break;
+                    }
                 }
             }
         });

@@ -1,20 +1,28 @@
 mod webrtc_manager;
 
 use crate::webrtc_manager::WebRtcManager;
+use anyhow::Result;
 use clap::Parser;
-use daemon_protocol::voicechat::{voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer}, GetStatusRequest, GetStatusResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse};
+use daemon_protocol::voicechat::{
+    GetStatusRequest, GetStatusResponse, ShutdownRequest, ShutdownResponse, StartRequest,
+    StartResponse, StopRequest, StopResponse,
+    voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer},
+};
 use tokio::sync::{mpsc, watch};
 use tonic::{Request as TonicRequest, Response, transport::Server};
 use webrtc_manager::Command;
 
 pub struct VoiceChatService {
     command_sender: mpsc::Sender<Command>,
-    shutdown_sender: watch::Sender<()>
+    shutdown_sender: watch::Sender<()>,
 }
 
 impl VoiceChatService {
     fn new(command_sender: mpsc::Sender<Command>, shutdown_sender: watch::Sender<()>) -> Self {
-        Self { command_sender,  shutdown_sender}
+        Self {
+            command_sender,
+            shutdown_sender,
+        }
     }
 }
 
@@ -22,7 +30,17 @@ impl VoiceChatService {
 #[command(version, about)]
 struct Cli {
     #[arg(long)]
-    signaling_ip: String
+    signaling_ip: String,
+    #[arg(long, default_value_t = 40001)]
+    grpc_port: u16,
+}
+
+impl VoiceChatService  {
+   async fn send_command(&self, command: Command) -> Result<(),tonic::Status> {
+        self.command_sender.send(command)
+            .await
+            .map_err(|_| tonic::Status::internal("Failed to send command to WebRTC manager"))
+    } 
 }
 
 #[tonic::async_trait]
@@ -32,13 +50,7 @@ impl VoicechatDaemon for VoiceChatService {
         _: TonicRequest<StartRequest>,
     ) -> Result<Response<StartResponse>, tonic::Status> {
         println!("gRPC: Received Start Call");
-
-        if self.command_sender.send(Command::StartCall).await.is_err() {
-            return Err(tonic::Status::internal(
-                "Failed to send start command to WebRTC manager",
-            ));
-        }
-
+        self.send_command(Command::StartCall).await?;
         Ok(Response::new(StartResponse {}))
     }
 
@@ -47,13 +59,7 @@ impl VoicechatDaemon for VoiceChatService {
         _request: TonicRequest<StopRequest>,
     ) -> Result<Response<StopResponse>, tonic::Status> {
         println!("gRPC: Received Stop request");
-
-        if self.command_sender.send(Command::StopCall).await.is_err() {
-            return Err(tonic::Status::internal(
-                "Failed to send stop command to WebRTC manager",
-            ));
-        }
-
+        self.send_command(Command::StopCall).await?;
         Ok(Response::new(StopResponse {}))
     }
 
@@ -77,31 +83,38 @@ impl VoicechatDaemon for VoiceChatService {
     ) -> Result<Response<ShutdownResponse>, tonic::Status> {
         println!("gRPC: Received Shutdown request");
 
-        if self.command_sender.send(Command::Shutdown).await.is_err() {
-            eprintln!("WebRtcManager was already shut down");
-        }
+        self.send_command(Command::Shutdown).await?;
+
 
         if self.shutdown_sender.send(()).is_err() {
-            return Err(tonic::Status::internal("Failed to send shutdown signal to server"));
+            return Err(tonic::Status::internal(
+                "Failed to send shutdown signal to gRPC server",
+            ));
         }
-
 
         Ok(Response::new(ShutdownResponse {}))
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let addr = "[::1]:40001".parse()?;
+    let addr = format!("[::1]:{}", cli.grpc_port).parse()?;
 
     let (command_sender, command_receiver) = mpsc::channel(10);
     let (shutdown_sender, mut shutdown_receiver) = watch::channel(());
 
     tokio::spawn(async move {
-        let mut manager = WebRtcManager::new(command_receiver, cli.signaling_ip);
-        if let Err(e) = manager.run().await {
-            eprintln!("WebRtc Manager failed: {}", e);
+        let maybe_manager = WebRtcManager::new(command_receiver, cli.signaling_ip);
+        match maybe_manager {
+            Ok(mut manager) => {
+                if let Err(e) = manager.run().await {
+                    eprintln!("WebRtc Manager failed: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to create manager: {}", e);
+            }
         }
     });
 
