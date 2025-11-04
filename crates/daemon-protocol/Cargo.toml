@@ -1,12 +1,12 @@
 [package]
 name = "daemon-protocol"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [dependencies]
-prost = "0.14.1"
-tonic = "0.14.2"
-tonic-prost = "0.14.2"
+prost.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
 
 [build-dependencies]
-tonic-prost-build = "0.14.2"
+tonic-prost-build.workspace = true

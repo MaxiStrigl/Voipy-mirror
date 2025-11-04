@@ -87,7 +87,7 @@ async fn start_daemon(signaling_ip: &str) -> Result<()> {
     let args = ["--signaling-ip", signaling_ip];
     let mut daemon_started = false;
 
-    let binary_name = format!("daemon{}", env::consts::EXE_SUFFIX);
+    let binary_name = format!("voipyd{}", env::consts::EXE_SUFFIX);
     let binary_path_cwd = format!(".{}{}", std::path::MAIN_SEPARATOR, binary_name);
 
     // Try path first
