@@ -1,5 +1,5 @@
 [package]
-name = "cli-client"
+name = "voipy"
 version.workspace = true
 edition.workspace = true
 

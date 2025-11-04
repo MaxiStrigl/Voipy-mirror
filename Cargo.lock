@@ -466,17 +466,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d728cc89cf3aee9ff92b05e62b19ee65a02b5702cff7d5a377e32c6ae29d8d"
 
 [[package]]
-name = "cli-client"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "clap",
- "daemon-protocol",
- "tokio",
- "tonic",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -633,24 +622,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "daemon"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "audio_capture",
- "audio_playback",
- "clap",
- "daemon-protocol",
- "futures-util",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.28.0",
- "tonic",
- "webrtc",
 ]
 
 [[package]]
@@ -2462,17 +2433,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "signaling_server"
-version = "0.0.1"
-dependencies = [
- "futures-util",
- "serde",
- "serde_json",
- "tokio",
- "warp",
-]
-
-[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3079,6 +3039,46 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voipy"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "daemon-protocol",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "voipy-signaling-server"
+version = "0.0.1"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "warp",
+]
+
+[[package]]
+name = "voipyd"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "audio_capture",
+ "audio_playback",
+ "clap",
+ "daemon-protocol",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tonic",
+ "webrtc",
+]
 
 [[package]]
 name = "waitgroup"

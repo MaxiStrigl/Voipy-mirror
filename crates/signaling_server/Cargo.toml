@@ -1,5 +1,5 @@
 [package]
-name = "signaling_server"
+name = "voipy-signaling-server"
 version.workspace = true
 edition.workspace = true
 

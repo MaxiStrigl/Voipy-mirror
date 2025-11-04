@@ -19,32 +19,32 @@ jobs:
       - name: Checkout Code
         uses: https://github.com/actions/checkout@v3
 
-      - name: Build daemon 
-        run: cargo build --release --package daemon 
+      - name: Build voipyd (daemon)
+        run: cargo build --release --package voipyd 
 
-      - name: Build cli-client 
-        run: cargo build --release --package cli-client 
+      - name: Build (voipy) cli-client 
+        run: cargo build --release --package  voipy
 
-      - name: Build signaling_server
-        run: cargo build --release --package signaling_server
+      - name: Build voipy-signaling-server
+        run: cargo build --release --package voipy-signaling-server
 
       - name: Upload deamon artifact
         uses: https://github.com/actions/upload-artifact@v3
         with:
-          name: daemom 
-          path: target/release/daemon
+          name: voipyd
+          path: target/release/voipyd
           if-no-files-found: error
 
       - name: Upload cli-client artifact
         uses: https://github.com/actions/upload-artifact@v3
         with:
-          name: cli-client
-          path: target/release/cli-client
+          name: voipy
+          path: target/release/voipy
           if-no-files-found: error
 
-      - name: Upload signaling_server artifact
+      - name: Upload voipy-signaling-server artifact
         uses: https://github.com/actions/upload-artifact@v3
         with:
-          name: signaling_server
-          path: target/release/signaling_server
+          name: voipy-signaling-server
+          path: target/release/voipy-signaling-server
           if-no-files-found: error

@@ -1,5 +1,5 @@
 [package]
-name = "daemon"
+name = "voipyd"
 version.workspace = true
 edition.workspace = true
 
