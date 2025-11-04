@@ -9,10 +9,10 @@ jobs:
     container: 
       image: rust:latest
     steps:
-      - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf)
+      - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf, zip)
         run: |
           apt-get update
-          apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler
+          apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler zip
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y nodejs
 
@@ -28,18 +28,19 @@ jobs:
       - name: Build voipy-signaling-server
         run: cargo build --release --package voipy-signaling-server
 
-      - name: Upload deamon artifact
-        uses: https://github.com/actions/upload-artifact@v3
-        with:
-          name: voipyd
-          path: target/release/voipyd
-          if-no-files-found: error
+      - name: Package Linux client
+        run: |
+          mkdir linux
+          cp target/release/voipyd ./linux
+          cp target/release/voipy ./linux
+          zip -r linux.zip linux
 
-      - name: Upload cli-client artifact
+      
+      - name: Upload client artifacts
         uses: https://github.com/actions/upload-artifact@v3
         with:
-          name: voipy
-          path: target/release/voipy
+          name: linux
+          path: linux.zip
           if-no-files-found: error
 
       - name: Upload voipy-signaling-server artifact
@@ -48,3 +49,41 @@ jobs:
           name: voipy-signaling-server
           path: target/release/voipy-signaling-server
           if-no-files-found: error
+
+  build-windows:
+      runs-on: docker
+      container: 
+        image: rust:latest
+      steps:
+        - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf, mingw-w64, zip)
+          run: |
+            apt-get update
+            apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler mingw-w64 zip
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+            apt-get install -y nodejs
+
+        - name: Checkout Code
+          uses: https://github.com/actions/checkout@v3
+
+        - name: Add Windows target
+          run: rustup target add x86_64-pc-windows-gnu
+
+        - name: Build voipyd (daemon)
+          run: cargo build --release --package voipyd --target x86_64-pc-windows-gnu
+
+        - name: Build (voipy) cli-client 
+          run: cargo build --release --package  voipy --target x86_64-pc-windows-gnu
+
+        - name: Package Windows
+          run: |
+            mkdir windows
+            cp target/x86_64-pc-windows-gnu/release/voipyd.exe ./windows
+            cp target/x86_64-pc-windows-gnu/release/voipy.exe ./windows
+            zip -r windows.zip windows
+
+        - name: Upload artifacts
+          uses: https://github.com/actions/upload-artifact@v3
+          with:
+            name: windows
+            path: windows.zip
+            if-no-files-found: error
