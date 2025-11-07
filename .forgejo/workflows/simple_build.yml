@@ -9,10 +9,10 @@ jobs:
     container: 
       image: rust:latest
     steps:
-      - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf, zip)
+      - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf )
         run: |
           apt-get update
-          apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler zip
+          apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler
           curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
           apt-get install -y nodejs
 
@@ -33,14 +33,13 @@ jobs:
           mkdir linux
           cp target/release/voipyd ./linux
           cp target/release/voipy ./linux
-          zip -r linux.zip linux
 
       
       - name: Upload client artifacts
         uses: https://github.com/actions/upload-artifact@v3
         with:
           name: linux
-          path: linux.zip
+          path: linux
           if-no-files-found: error
 
       - name: Upload voipy-signaling-server artifact
@@ -55,10 +54,10 @@ jobs:
       container: 
         image: rust:latest
       steps:
-        - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf, mingw-w64, zip)
+        - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf, mingw-w64
           run: |
             apt-get update
-            apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler mingw-w64 zip
+            apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler mingw-w64
             curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
             apt-get install -y nodejs
 
@@ -79,11 +78,10 @@ jobs:
             mkdir windows
             cp target/x86_64-pc-windows-gnu/release/voipyd.exe ./windows
             cp target/x86_64-pc-windows-gnu/release/voipy.exe ./windows
-            zip -r windows.zip windows
 
         - name: Upload artifacts
           uses: https://github.com/actions/upload-artifact@v3
           with:
             name: windows
-            path: windows.zip
+            path: windows
             if-no-files-found: error
