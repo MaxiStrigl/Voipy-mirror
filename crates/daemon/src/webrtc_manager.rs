@@ -154,11 +154,12 @@ impl WebRtcManager {
         loop {
             tokio::select! {
                 Some(command) = self.command_receiver.recv() => {
-                    if let Err(_) = self.handle_command(
+                    if let Err(e) = self.handle_command(
                         command,
                         &candidate_sender,
                         &mut ws_sender,
                     ).await {
+                        eprintln!("Handle command returned: {}", e);
                         return Ok(true);
                     }
                 }
