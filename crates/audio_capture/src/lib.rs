@@ -139,7 +139,7 @@ impl Capture {
             None
         };
 
-        let opus_channels = match stream_config.channels {
+        let opus_channels = match config.channels {
             1 => opus::Channels::Mono,
             2 => opus::Channels::Stereo,
             _ => panic!("Invalid amount of channels"),
@@ -203,7 +203,8 @@ impl Capture {
 
                         for i in 0..resampled_frames {
                             for j in 0..resampled_channels {
-                                interleaved[i * resampled_channels + j] = resampled_deinterleaved[i][j];
+                                interleaved[i * resampled_channels + j] = 
+                                    resampled_deinterleaved[j][i];
                             } 
                         }
                         processed_data = std::borrow::Cow::from(interleaved);
@@ -216,8 +217,7 @@ impl Capture {
             }
 
             // Channel conversion
-
-            if stream_config.channels != config.channels {
+            if input_channels != output_channels {
                 let mut converted = Vec::new();
                 if input_channels == 2 && output_channels == 1 {
                     
