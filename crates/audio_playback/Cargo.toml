@@ -8,6 +8,7 @@ anyhow.workspace = true
 cpal.workspace = true
 opus.workspace = true
 ringbuf.workspace = true
+rubato.workspace = true
 thiserror.workspace = true
 webrtc.workspace = true
 tokio-tungstenite.workspace = true

@@ -3,7 +3,6 @@ use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use opus::Encoder;
 use rubato::{Resampler, ResamplerConstructionError};
-use core::num;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -58,6 +57,7 @@ impl Capture {
         let device = host
             .default_input_device()
             .ok_or(CaptureError::NoInputDevice)?;
+
         println!("Using input device: {}", device.name()?);
 
         let desired_sample_rate = cpal::SampleRate(config.sample_rate);
@@ -115,13 +115,8 @@ impl Capture {
 
 
         let samples_per_snippet =
-            (stream_config.channels as u32 * config.sample_rate * config.snippet_duration / 1000)
+            (config.channels as u32 * config.sample_rate * config.snippet_duration / 1000)
                 as usize;
-
-        println!(
-            "Sending audio data in snippets of {} ms ({} samples)",
-            config.snippet_duration, samples_per_snippet
-        );
 
         let resampler = if stream_config.sample_rate.0 != config.sample_rate {
             println!("Input sample rate ({}) does not match desired one {}. Using Resampler.", 
