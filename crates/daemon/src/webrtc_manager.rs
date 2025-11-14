@@ -20,7 +20,10 @@ use webrtc::{
         media_engine::{MIME_TYPE_OPUS, MediaEngine},
         setting_engine::SettingEngine,
     },
-    ice_transport::ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+    ice_transport::{
+        ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+        ice_server::RTCIceServer,
+    },
     interceptor::registry::Registry,
     peer_connection::{
         RTCPeerConnection, configuration::RTCConfiguration,
@@ -199,7 +202,19 @@ impl WebRtcManager {
         &mut self,
         candidate_sender: UnboundedSender<RTCIceCandidateInit>,
     ) -> Result<()> {
-        let config = RTCConfiguration::default();
+        let config = RTCConfiguration {
+            ice_servers: vec![
+                RTCIceServer {
+                    urls: vec!["stun:stun.l.google.com:19302".to_owned()],
+                    ..Default::default()
+                },
+                RTCIceServer {
+                    urls: vec!["stun:stun1.l.google.com:19302".to_owned()],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
         let peer_connection = Arc::new(self.api.new_peer_connection(config).await?);
 
         let audio_track = Arc::new(TrackLocalStaticSample::new(
