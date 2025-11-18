@@ -10,6 +10,9 @@ use tokio::sync::mpsc;
 use webrtc::{
     media::Sample, track::track_local::track_local_static_sample::TrackLocalStaticSample,
 };
+use webrtc_audio_processing::{ 
+    Config as ApConfig, GainControl, GainControlMode, InitializationConfig, Processor,
+};
 
 /// Custom error type for the capture library.
 #[derive(Debug, Error)]
@@ -113,6 +116,29 @@ impl Capture {
 
         println!("Using input config {:?}", stream_config);
 
+        let processing_config = InitializationConfig {
+            num_capture_channels: stream_config.channels as i32, 
+            num_render_channels: stream_config.channels as i32,  
+        ..InitializationConfig::default()
+        };
+
+        let mut ap = Processor::new(&processing_config).unwrap();
+
+        let ap_config = ApConfig {
+            echo_cancellation: None,
+            gain_control: Some(GainControl{ 
+                mode: GainControlMode::AdaptiveDigital, 
+                target_level_dbfs: 31, 
+                compression_gain_db: 0, 
+                enable_limiter:  true
+            }),
+            noise_suppression: None,
+            voice_detection: None,
+            enable_transient_suppressor: false,
+            enable_high_pass_filter: false,
+        };
+
+        ap.set_config(ap_config);
 
         let samples_per_snippet =
             (config.channels as u32 * config.sample_rate * config.snippet_duration / 1000)
@@ -167,22 +193,45 @@ impl Capture {
             }
         });
 
-        let input_channels = stream_config.channels;
+        let stream_sample_rate = stream_config.sample_rate.0;
+        let input_channels = stream_config.channels as usize;
         let output_channels = config.channels;
 
         let mut resampler = resampler;
+        let mut ap_buffer: Vec<f32> = Vec::new();
+
+        let samples_per_10_ms_per_channel = stream_sample_rate as usize / 100 as usize;
+        let chunk_size = samples_per_10_ms_per_channel * input_channels;
 
         let input_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            let mut processed_data = std::borrow::Cow::from(data);
+
+            ap_buffer.extend_from_slice(data);
+
+            let num_chunks = ap_buffer.len() / chunk_size;
+            if num_chunks == 0 {
+                return;
+            }
+
+            let processable_len = num_chunks* chunk_size;
+            let mut processable_data = ap_buffer.drain(..processable_len)
+                .collect::<Vec<_>>();
+
+            for chunk in processable_data.chunks_mut(chunk_size) {
+                if let Err(e) = ap.process_capture_frame(chunk) {
+                   eprintln!("audio processing error: {}", e); 
+                }
+            }
+
+            let mut processed_data = std::borrow::Cow::from(processable_data);
 
             if let Some(resampler) = &mut resampler {
                 let channels = input_channels as usize;
-                let num_frames = data.len() / channels;
+                let num_frames = processed_data.len() / channels;
                 let mut deinterleaved = vec![vec![0.0; num_frames]; channels];
 
                 for i in 0..num_frames {
                     for j in 0..channels {
-                        deinterleaved[j][i] = data[i * channels + j];
+                        deinterleaved[j][i] = processed_data[i * channels + j];
                     }
                 }
 
@@ -212,7 +261,7 @@ impl Capture {
             }
 
             // Channel conversion
-            if input_channels != output_channels {
+            if input_channels != output_channels as usize {
                 let mut converted = Vec::new();
                 if input_channels == 2 && output_channels == 1 {
                     
