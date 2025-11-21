@@ -3,6 +3,7 @@ use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use opus::Encoder;
 use rubato::{Resampler, ResamplerConstructionError};
+use std::thread::{self, sleep, spawn};
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -10,7 +11,7 @@ use tokio::sync::mpsc;
 use webrtc::{
     media::Sample, track::track_local::track_local_static_sample::TrackLocalStaticSample,
 };
-use webrtc_audio_processing::{ 
+use webrtc_audio_processing::{
     Config as ApConfig, GainControl, GainControlMode, InitializationConfig, Processor,
 };
 
@@ -74,36 +75,36 @@ impl Capture {
             .find(|c| {
                 c.channels() == config.channels
                     && c.min_sample_rate() <= desired_sample_rate
-                    && c.max_sample_rate() >= desired_sample_rate 
+                    && c.max_sample_rate() >= desired_sample_rate
             })
-            .or_else(|| { 
-                supported_configs.iter().find(|c| { 
+            .or_else(|| {
+                supported_configs.iter().find(|c| {
                     c.channels() == 2
                         && c.min_sample_rate() <= desired_sample_rate
-                        && c.max_sample_rate() >= desired_sample_rate 
+                        && c.max_sample_rate() >= desired_sample_rate
                 })
             })
-            .or_else(|| { 
-                supported_configs.iter().find(|c| { 
+            .or_else(|| {
+                supported_configs.iter().find(|c| {
                     c.channels() == 1
                         && c.min_sample_rate() <= desired_sample_rate
-                        && c.max_sample_rate() >= desired_sample_rate 
+                        && c.max_sample_rate() >= desired_sample_rate
                 })
             })
-        // No config supports our rate take best we can get
+            // No config supports our rate take best we can get
             .or_else(|| {
-                supported_configs.iter()
-                .find(|c| c.channels() == config.channels)
-                .or_else(|| supported_configs.iter().find(|c| c.channels() == 2))
-                .or_else(|| supported_configs.iter().find(|c| c.channels() == 1))
+                supported_configs
+                    .iter()
+                    .find(|c| c.channels() == config.channels)
+                    .or_else(|| supported_configs.iter().find(|c| c.channels() == 2))
+                    .or_else(|| supported_configs.iter().find(|c| c.channels() == 1))
             })
-        // Just to be max robust: If we still did not find anything take whatever we can get
+            // Just to be max robust: If we still did not find anything take whatever we can get
             .or_else(|| supported_configs.iter().next())
             .ok_or(CaptureError::NoSupportedConfig)?;
 
-        let sample_rate_to_use = if supported_config_range.min_sample_rate() <= 
-            desired_sample_rate 
-            && supported_config_range.max_sample_rate() >= desired_sample_rate 
+        let sample_rate_to_use = if supported_config_range.min_sample_rate() <= desired_sample_rate
+            && supported_config_range.max_sample_rate() >= desired_sample_rate
         {
             desired_sample_rate
         } else {
@@ -117,20 +118,20 @@ impl Capture {
         println!("Using input config {:?}", stream_config);
 
         let processing_config = InitializationConfig {
-            num_capture_channels: stream_config.channels as i32, 
-            num_render_channels: stream_config.channels as i32,  
-        ..InitializationConfig::default()
+            num_capture_channels: stream_config.channels as i32,
+            num_render_channels: stream_config.channels as i32,
+            ..InitializationConfig::default()
         };
 
         let mut ap = Processor::new(&processing_config).unwrap();
 
         let ap_config = ApConfig {
             echo_cancellation: None,
-            gain_control: Some(GainControl{ 
-                mode: GainControlMode::AdaptiveDigital, 
-                target_level_dbfs: 31, 
-                compression_gain_db: 0, 
-                enable_limiter:  true
+            gain_control: Some(GainControl {
+                mode: GainControlMode::AdaptiveDigital,
+                target_level_dbfs: 3,
+                compression_gain_db: 30,
+                enable_limiter: true,
             }),
             noise_suppression: None,
             voice_detection: None,
@@ -138,22 +139,22 @@ impl Capture {
             enable_high_pass_filter: false,
         };
 
-        ap.set_config(ap_config);
+        ap.set_config(ap_config.clone());
 
         let samples_per_snippet =
-            (config.channels as u32 * config.sample_rate * config.snippet_duration / 1000)
-                as usize;
+            (config.channels as u32 * config.sample_rate * config.snippet_duration / 1000) as usize;
 
         let resampler = if stream_config.sample_rate.0 != config.sample_rate {
-            println!("Input sample rate ({}) does not match desired one {}. Using Resampler.", 
-                    stream_config.sample_rate.0, config.sample_rate
+            println!(
+                "Input sample rate ({}) does not match desired one {}. Using Resampler.",
+                stream_config.sample_rate.0, config.sample_rate
             );
 
             let resampler = rubato::FftFixedInOut::<f32>::new(
                 stream_config.sample_rate.0 as usize,
                 config.sample_rate as usize,
                 1024,
-                stream_config.channels as usize
+                stream_config.channels as usize,
             )?;
             Some(Box::new(resampler))
         } else {
@@ -171,11 +172,9 @@ impl Capture {
         let mut audio_buffer: Vec<f32> = Vec::new();
         let mut opus_buffer = vec![0u8; 4096];
 
-
         let (audio_sender, mut audio_receiver) = mpsc::unbounded_channel::<Vec<u8>>();
         let track = config.track;
         let snippet_duration_ms = config.snippet_duration;
-
 
         config.tokio_handle.spawn(async move {
             let snippet_duration = Duration::from_millis(snippet_duration_ms as u64);
@@ -204,7 +203,6 @@ impl Capture {
         let chunk_size = samples_per_10_ms_per_channel * input_channels;
 
         let input_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-
             ap_buffer.extend_from_slice(data);
 
             let num_chunks = ap_buffer.len() / chunk_size;
@@ -212,13 +210,12 @@ impl Capture {
                 return;
             }
 
-            let processable_len = num_chunks* chunk_size;
-            let mut processable_data = ap_buffer.drain(..processable_len)
-                .collect::<Vec<_>>();
+            let processable_len = num_chunks * chunk_size;
+            let mut processable_data = ap_buffer.drain(..processable_len).collect::<Vec<_>>();
 
             for chunk in processable_data.chunks_mut(chunk_size) {
                 if let Err(e) = ap.process_capture_frame(chunk) {
-                   eprintln!("audio processing error: {}", e); 
+                    eprintln!("audio processing error: {}", e);
                 }
             }
 
@@ -239,20 +236,21 @@ impl Capture {
                     Ok(resampled_deinterleaved) => {
                         let resampled_channels = resampled_deinterleaved.len();
                         let resampled_frames = if resampled_channels > 0 {
-                            resampled_deinterleaved[0].len() 
-                        } else { 0 };
-                        
-                        let mut interleaved = vec![0.0; resampled_frames * 
-                            resampled_channels];
+                            resampled_deinterleaved[0].len()
+                        } else {
+                            0
+                        };
+
+                        let mut interleaved = vec![0.0; resampled_frames * resampled_channels];
 
                         for i in 0..resampled_frames {
                             for j in 0..resampled_channels {
-                                interleaved[i * resampled_channels + j] = 
+                                interleaved[i * resampled_channels + j] =
                                     resampled_deinterleaved[j][i];
-                            } 
+                            }
                         }
                         processed_data = std::borrow::Cow::from(interleaved);
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Resampling error: {}", e);
                         return;
@@ -264,7 +262,6 @@ impl Capture {
             if input_channels != output_channels as usize {
                 let mut converted = Vec::new();
                 if input_channels == 2 && output_channels == 1 {
-                    
                     for frame in processed_data.chunks_exact(2) {
                         converted.push((frame[0] + frame[1]) / 2.0);
                     }
