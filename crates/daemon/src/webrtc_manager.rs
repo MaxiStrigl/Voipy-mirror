@@ -81,7 +81,7 @@ fn setup_api() -> Result<API> {
     registry = register_default_interceptors(registry, &mut m)?;
 
     let mut settings_engine = SettingEngine::default();
-    settings_engine.set_ice_timeouts(Some(Duration::from_secs(1)), None, None);
+    settings_engine.set_ice_timeouts(Some(Duration::from_secs(5)), None, None);
 
     let api = APIBuilder::new()
         .with_media_engine(m)
