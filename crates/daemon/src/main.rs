@@ -4,9 +4,7 @@ use crate::webrtc_manager::WebRtcManager;
 use anyhow::Result;
 use clap::Parser;
 use daemon_protocol::voicechat::{
-    GetStatusRequest, GetStatusResponse, ShutdownRequest, ShutdownResponse, StartRequest,
-    StartResponse, StopRequest, StopResponse,
-    voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer},
+    voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer}, GetInputVolumeRequest, GetInputVolumeResponse, GetOutputVolumeRequest, GetOutputVolumeResponse, GetStatusRequest, GetStatusResponse, SetInputVolumeRequest, SetInputVolumeResponse, SetOutputVolumeRequest, SetOutputVolumeResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse
 };
 use tokio::sync::{mpsc, watch};
 use tonic::{Request as TonicRequest, Response, transport::Server};
@@ -35,12 +33,13 @@ struct Cli {
     grpc_port: u16,
 }
 
-impl VoiceChatService  {
-   async fn send_command(&self, command: Command) -> Result<(),tonic::Status> {
-        self.command_sender.send(command)
+impl VoiceChatService {
+    async fn send_command(&self, command: Command) -> Result<(), tonic::Status> {
+        self.command_sender
+            .send(command)
             .await
             .map_err(|_| tonic::Status::internal("Failed to send command to WebRTC manager"))
-    } 
+    }
 }
 
 #[tonic::async_trait]
@@ -85,7 +84,6 @@ impl VoicechatDaemon for VoiceChatService {
 
         self.send_command(Command::Shutdown).await?;
 
-
         if self.shutdown_sender.send(()).is_err() {
             return Err(tonic::Status::internal(
                 "Failed to send shutdown signal to gRPC server",
@@ -93,6 +91,40 @@ impl VoicechatDaemon for VoiceChatService {
         }
 
         Ok(Response::new(ShutdownResponse {}))
+    }
+
+    async fn get_input_volume(
+        &self,
+        _: TonicRequest<GetInputVolumeRequest>,
+    ) -> Result<Response<GetInputVolumeResponse>, tonic::Status> {
+        todo!()
+    }
+
+    async fn set_input_volume(
+        &self,
+        request: TonicRequest<SetInputVolumeRequest>,
+    ) -> Result<Response<SetInputVolumeResponse>, tonic::Status> {
+        let volume = request.into_inner().volume;
+
+        self.send_command(Command::SetInputVolume(volume)).await?;
+        Ok(Response::new(SetInputVolumeResponse {}))
+    }
+
+    async fn get_output_volume(
+        &self,
+        _: TonicRequest<GetOutputVolumeRequest>,
+    ) -> Result<Response<GetOutputVolumeResponse>, tonic::Status> {
+        todo!()
+    }
+
+    async fn set_output_volume(
+        &self,
+        request: TonicRequest<SetOutputVolumeRequest>,
+    ) -> Result<Response<SetOutputVolumeResponse>, tonic::Status> {
+        let volume = request.into_inner().volume;
+
+        self.send_command(Command::SetOutputVolume(volume)).await?;
+        Ok(Response::new(SetOutputVolumeResponse {}))
     }
 }
 

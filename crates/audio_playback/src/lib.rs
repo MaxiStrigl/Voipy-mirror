@@ -6,7 +6,7 @@ use ringbuf::HeapRb;
 use ringbuf::traits::*;
 use rubato::{Resampler, ResamplerConstructionError};
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use webrtc::track::track_remote::TrackRemote;
@@ -46,6 +46,7 @@ pub struct PlaybackConfig {
 
 pub struct Playback {
     _stream: cpal::Stream,
+    volume: Arc<Mutex<f32>>
 }
 
 impl Playback {
@@ -144,10 +145,21 @@ impl Playback {
 
         config.tokio_handle.spawn(async move {
             let mut opus_buffer = [0f32; 11520]; // 48000 Sample rate * 2 Channels * 0.120 ms (opus max)
-
+            let mut last_seq:Option<u16> = None;
             loop {
                 match track.read_rtp().await {
                     Ok((packet, _)) => {
+                        let seq = packet.header.sequence_number;
+
+                        if let Some(prev_seq) = last_seq {
+                            let expected_seq = prev_seq.wrapping_add(1);
+                            if seq != expected_seq {
+                                let lost = seq.wrapping_sub(prev_seq).saturating_sub(1);
+                                println!("Playback: Packet loss detected. From seq {} to {}. Lost ~{} packets.", prev_seq, seq, lost);
+                            }
+                        }
+                        last_seq = Some(seq);
+
                         let compressed = packet.payload;
 
                         match decoder.decode_float(&compressed, &mut opus_buffer, false) {
@@ -231,12 +243,28 @@ impl Playback {
             }
         });
 
+        let volume = Arc::new(Mutex::new(1.0f32));
+        let callback_volume = volume.clone();
+
         let output_callback = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            let mut underruns = 0;
+            let vol = *callback_volume.lock().unwrap();
+
             for sample in data.iter_mut() {
                 *sample = match consumer.try_pop() {
-                    Some(s) => s,
-                    None => 0.0,
+                    Some(s) => s * vol,
+                    None => {
+                        underruns += 1;
+                        0.0
+                    }
                 }
+            }
+
+            if underruns > 0 {
+                println!(
+                    "Playback Audio Buffer underrun. Played {} slices of silence",
+                    underruns
+                );
             }
         };
 
@@ -248,6 +276,12 @@ impl Playback {
             device.build_output_stream(&stream_config, output_callback, error_callback, None)?;
         stream.play().unwrap();
 
-        Ok(Self { _stream: stream })
+        Ok(Self { _stream: stream, volume })
+    }
+
+    pub fn set_volume(&mut self, new_volume: f32) {
+        if let Ok(mut volume) = self.volume.lock() {
+            *volume = new_volume;
+        } 
     }
 }

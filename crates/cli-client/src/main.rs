@@ -1,15 +1,15 @@
 use std::{env, process::Stdio, time::Duration};
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use daemon_protocol::voicechat::{
-    voicechat_daemon_client::VoicechatDaemonClient, ShutdownRequest, StartRequest, StopRequest
+    voicechat_daemon_client::VoicechatDaemonClient, SetInputVolumeRequest, SetOutputVolumeRequest, ShutdownRequest, StartRequest, StopRequest
 };
 
 use std::process::Command as StdCommand;
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version, about, infer_subcommands = true)]
 struct Cli {
     #[arg(long, global = true, default_value_t = 40001)]
     port: u16,
@@ -30,6 +30,24 @@ enum DaemonCommands {
     Stop {},
 }
 
+#[derive(Copy, Clone, ValueEnum)]
+enum VolumeAction {
+    #[value(alias = "g")]
+    Get,
+    #[value(alias = "s")]
+    Set,
+    #[value(alias = "m")]
+    Mute,
+}
+
+#[derive(Copy, Clone, PartialEq, ValueEnum)]
+enum VolumeTarget {
+    #[value(name = "self", alias = "s")]
+    Self_,
+    #[value(alias = "o")]
+    Other,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     #[command(alias = "call-start")]
@@ -48,6 +66,18 @@ enum Commands {
     Daemon {
         #[command(subcommand)]
         command: DaemonCommands,
+    },
+
+    /// Volume Settings
+    Volume {
+        #[arg(value_enum)]
+        /// Action to execute.
+        action: VolumeAction,
+        #[arg(value_enum)]
+        /// Target for the action. 
+        target: VolumeTarget,
+        /// New value for 'set' command.
+        value: Option<f32>,
     },
 }
 
@@ -76,6 +106,39 @@ async fn handle_command(
         }
         Commands::Status => todo!(),
         Commands::Daemon { .. } => {}
+        Commands::Volume {
+            action,
+            target,
+            value,
+        } => match action {
+            VolumeAction::Set => {
+                if target == VolumeTarget::Self_ {
+                    if let Some(value) = value {
+                        let request = tonic::Request::new(SetInputVolumeRequest { volume: value });
+                        println!("Sending set volume Request {}", value);
+                        let response = client.set_input_volume(request).await;
+                        println!("Received answer {:?}", response);
+                    } else {
+                        println!("Value is required for 'set' action.");
+                    }
+                } else {
+                    if let Some(value) = value {
+                        let request = tonic::Request::new(SetOutputVolumeRequest { volume: value });
+                        println!("Sending set volume Request {}", value);
+                        let response = client.set_output_volume(request).await;
+                        println!("Received answer {:?}", response);
+                    } else {
+                        println!("Value is required for 'set' action.");
+                    }
+                }
+            }
+            VolumeAction::Get => {
+                println!("Get volume not yet implemented.");
+            }
+            VolumeAction::Mute => {
+                println!("Mute volume not yet implemented.");
+            }
+        },
     }
 
     Ok(())
@@ -146,7 +209,6 @@ async fn start_daemon(signaling_ip: &str) -> Result<()> {
     Ok(())
 }
 
-
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -165,8 +227,7 @@ async fn main() -> Result<()> {
                     let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
                     println!("Shutdown daemon");
                     client.shutdown(request).await?;
-                }
-                else {
+                } else {
                     println!("Daemon is already dead.");
                 }
                 return Ok(());
@@ -189,7 +250,8 @@ async fn main() -> Result<()> {
             eprintln!("Daemon not started. START IT PLS. BECAUSE I CAN'T. THX FOR NOTHING MAXI");
         }
 
-        let mut client = VoicechatDaemonClient::connect(format!("http://[::1]:{}", cli.port)).await?;
+        let mut client =
+            VoicechatDaemonClient::connect(format!("http://[::1]:{}", cli.port)).await?;
 
         handle_command(cli.command.unwrap(), &mut client).await?;
     };
