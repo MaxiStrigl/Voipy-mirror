@@ -45,6 +45,7 @@ pub enum Command {
     StartCall,
     StopCall,
     Shutdown,
+    SetInputVolume(f32),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -383,6 +384,14 @@ impl WebRtcManager {
                 }
                 ws_sender.send(Message::Close(None)).await?;
                 return Ok(LoopControl::Break);
+            }
+
+            Command::SetInputVolume(volume) => {
+                println!("Setting input volume to: {}", volume);
+
+                if let Some(capture) = &mut self.capture {
+                    capture.set_volume(volume);
+                }
             }
         }
 

@@ -12,18 +12,18 @@ service VoicechatDaemon {
 
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 
+  rpc GetInputVolume(GetInputVolumeRequest) returns (GetInputVolumeResponse);
+
+  rpc SetInputVolume(SetInputVolumeRequest) returns (SetInputVolumeResponse);
 }
 
 message StartRequest {}
-
 message StartResponse {}
 
 message StopRequest {}
-
 message StopResponse {}
 
 message GetStatusRequest {}
-
 message GetStatusResponse{
   enum Status {
     Stopped = 0;
@@ -36,6 +36,15 @@ message GetStatusResponse{
 }
 
 message ShutdownRequest {}
-
 message ShutdownResponse {}
+
+message GetInputVolumeRequest {}
+message GetInputVolumeResponse {
+  float volume = 1;
+}
+
+message SetInputVolumeRequest {
+  float volume = 1;
+}
+message SetInputVolumeResponse {}
 

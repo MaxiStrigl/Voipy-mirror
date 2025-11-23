@@ -3,16 +3,18 @@ use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use opus::Encoder;
 use rubato::{FftFixedInOut, Resampler, ResamplerConstructionError};
-use webrtc::media::Sample;
-use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
+use std::sync::Mutex;
 use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
-use webrtc_audio_processing::{
-    Config as ApConfig, GainControl, GainControlMode, InitializationConfig, Processor, VoiceDetection,
-};
+use webrtc::media::Sample;
+use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 use webrtc_audio_processing::VoiceDetectionLikelihood;
+use webrtc_audio_processing::{
+    Config as ApConfig, GainControl, GainControlMode, InitializationConfig, Processor,
+    VoiceDetection,
+};
 
 /// Custom error type for the capture library.
 #[derive(Debug, Error)]
@@ -51,6 +53,7 @@ pub struct CaptureConfig {
 
 pub struct Capture {
     _stream: cpal::Stream,
+    processor: Arc<Mutex<AudioProcessor>>,
 }
 
 struct AudioProcessor {
@@ -60,6 +63,7 @@ struct AudioProcessor {
     output_channels: u16,
     ap_buffer: Vec<f32>,
     chunk_size: usize,
+    volume: f32,
 }
 
 impl AudioProcessor {
@@ -121,7 +125,12 @@ impl AudioProcessor {
             output_channels,
             ap_buffer: Vec::new(),
             chunk_size,
+            volume: 1.0,
         })
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        self.volume = volume;
     }
 
     fn process(&mut self, data: &[f32]) -> Vec<f32> {
@@ -142,6 +151,7 @@ impl AudioProcessor {
         }
 
         let mut processed_data = std::borrow::Cow::from(processable_data);
+
 
         if let Some(resampler) = &mut self.resampler {
             let channels = self.input_channels as usize;
@@ -195,7 +205,15 @@ impl AudioProcessor {
                 processed_data = std::borrow::Cow::from(converted);
             }
         }
-        processed_data.into_owned()
+        let mut processed_data = processed_data.into_owned();
+
+        if self.volume != 1.0 {
+            for sample in &mut processed_data {
+                *sample *= self.volume;
+            }
+        }
+
+        processed_data
     }
 }
 
@@ -262,12 +280,12 @@ impl Capture {
 
         println!("Using input config {:?}", stream_config);
 
-        let mut audio_processor = AudioProcessor::new(
+        let mut audio_processor = Arc::new(Mutex::new(AudioProcessor::new(
             stream_config.sample_rate.0,
             stream_config.channels,
             config.sample_rate,
             config.channels,
-        )?;
+        )?));
 
         let samples_per_snippet =
             (config.channels as u32 * config.sample_rate * config.snippet_duration / 1000) as usize;
@@ -303,8 +321,9 @@ impl Capture {
             }
         });
 
+        let processor_clone = audio_processor.clone();
         let input_callback = move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            let processed_data = audio_processor.process(data);
+            let processed_data = processor_clone.lock().unwrap().process(data);
 
             audio_buffer.extend_from_slice(&processed_data);
 
@@ -333,6 +352,15 @@ impl Capture {
             device.build_input_stream(&stream_config, input_callback, error_callback, None)?;
         stream.play().unwrap();
 
-        Ok(Self { _stream: stream })
+        Ok(Self {
+            _stream: stream,
+            processor: audio_processor,
+        })
+    }
+
+    pub fn set_volume(&mut self, volume: f32) {
+        if let Ok(mut processor) = self.processor.lock() {
+            processor.set_volume(volume);
+        }
     }
 }

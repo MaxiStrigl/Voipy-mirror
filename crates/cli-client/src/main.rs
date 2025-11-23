@@ -3,7 +3,7 @@ use std::{env, process::Stdio, time::Duration};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use daemon_protocol::voicechat::{
-    voicechat_daemon_client::VoicechatDaemonClient, ShutdownRequest, StartRequest, StopRequest
+    voicechat_daemon_client::VoicechatDaemonClient, SetInputVolumeRequest, ShutdownRequest, StartRequest, StopRequest
 };
 
 use std::process::Command as StdCommand;
@@ -49,6 +49,10 @@ enum Commands {
         #[command(subcommand)]
         command: DaemonCommands,
     },
+
+    Volume {
+        value: f32
+    }
 }
 
 async fn is_daemon_running() -> bool {
@@ -63,19 +67,25 @@ async fn handle_command(
 ) -> Result<()> {
     match command {
         Commands::Start { .. } => {
-            let request = tonic::Request::new(StartRequest {});
-            println!("Sending start request...");
-            let response = client.start(request).await;
-            println!("Received answer {:?}", response);
-        }
+                let request = tonic::Request::new(StartRequest {});
+                println!("Sending start request...");
+                let response = client.start(request).await;
+                println!("Received answer {:?}", response);
+            }
         Commands::Stop => {
-            let request = tonic::Request::new(StopRequest {});
-            println!("Sending stop request...");
-            let response = client.stop(request).await;
-            println!("Received answer {:?}", response);
-        }
+                let request = tonic::Request::new(StopRequest {});
+                println!("Sending stop request...");
+                let response = client.stop(request).await;
+                println!("Received answer {:?}", response);
+            }
         Commands::Status => todo!(),
         Commands::Daemon { .. } => {}
+        Commands::Volume { value } => {
+            let request = tonic::Request::new(SetInputVolumeRequest {volume: value});
+            println!("Sending set volume Request {}", value);
+            let response = client.set_input_volume(request).await;
+            println!("Received answer {:?}", response);
+        },
     }
 
     Ok(())
