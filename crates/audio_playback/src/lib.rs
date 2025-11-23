@@ -6,7 +6,7 @@ use ringbuf::HeapRb;
 use ringbuf::traits::*;
 use rubato::{Resampler, ResamplerConstructionError};
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use webrtc::track::track_remote::TrackRemote;
@@ -46,6 +46,7 @@ pub struct PlaybackConfig {
 
 pub struct Playback {
     _stream: cpal::Stream,
+    volume: Arc<Mutex<f32>>
 }
 
 impl Playback {
@@ -242,12 +243,16 @@ impl Playback {
             }
         });
 
+        let volume = Arc::new(Mutex::new(1.0f32));
+        let callback_volume = volume.clone();
+
         let output_callback = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
             let mut underruns = 0;
+            let vol = *callback_volume.lock().unwrap();
 
             for sample in data.iter_mut() {
                 *sample = match consumer.try_pop() {
-                    Some(s) => s,
+                    Some(s) => s * vol,
                     None => {
                         underruns += 1;
                         0.0
@@ -271,6 +276,12 @@ impl Playback {
             device.build_output_stream(&stream_config, output_callback, error_callback, None)?;
         stream.play().unwrap();
 
-        Ok(Self { _stream: stream })
+        Ok(Self { _stream: stream, volume })
+    }
+
+    pub fn set_volume(&mut self, new_volume: f32) {
+        if let Ok(mut volume) = self.volume.lock() {
+            *volume = new_volume;
+        } 
     }
 }

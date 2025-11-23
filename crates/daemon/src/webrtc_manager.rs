@@ -46,6 +46,7 @@ pub enum Command {
     StopCall,
     Shutdown,
     SetInputVolume(f32),
+    SetOutputVolume(f32),
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
@@ -100,6 +101,7 @@ pub struct WebRtcManager {
     peer_connection: Option<Arc<RTCPeerConnection>>,
     audio_track: Option<Arc<TrackLocalStaticSample>>,
     capture: Option<Capture>,
+    playbacks: Arc<Mutex<Vec<Playback>>>,
 }
 
 impl WebRtcManager {
@@ -112,6 +114,7 @@ impl WebRtcManager {
             peer_connection: None,
             audio_track: None,
             capture: None,
+            playbacks: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
@@ -240,7 +243,7 @@ impl WebRtcManager {
 
         peer_connection.add_track(audio_track.clone()).await?;
 
-        setup_peer_connection_handlers(&peer_connection, candidate_sender);
+        setup_peer_connection_handlers(&peer_connection, candidate_sender, self.playbacks.clone());
 
         self.peer_connection = Some(peer_connection);
         self.audio_track = Some(audio_track);
@@ -393,6 +396,13 @@ impl WebRtcManager {
                     capture.set_volume(volume);
                 }
             }
+            Command::SetOutputVolume(volume) => {
+                println!("Setting output volume to: {}", volume);
+
+                for playback in self.playbacks.lock().await.iter_mut() {
+                    playback.set_volume(volume);
+                }
+            }
         }
 
         Ok(LoopControl::Continue)
@@ -402,9 +412,9 @@ impl WebRtcManager {
 fn setup_peer_connection_handlers(
     peer_connection: &Arc<RTCPeerConnection>,
     candidate_sender: mpsc::UnboundedSender<RTCIceCandidateInit>,
+    active_playbacks: Arc<Mutex<Vec<Playback>>>,
 ) {
     let tokio_handle = tokio::runtime::Handle::current();
-    let active_playbacks = Arc::new(Mutex::new(Vec::<Playback>::new()));
 
     peer_connection.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
         let sender = candidate_sender.clone();
@@ -424,10 +434,11 @@ fn setup_peer_connection_handlers(
         })
     }));
 
+    let on_track_playbacks = active_playbacks.clone();
     peer_connection.on_track(Box::new(
         move |track: Arc<TrackRemote>, _: Arc<RTCRtpReceiver>, _: Arc<RTCRtpTransceiver>| {
             let handle_clone = tokio_handle.clone();
-            let playbacks = active_playbacks.clone();
+            let playbacks = on_track_playbacks.clone();
             Box::pin(async move {
                 if track.kind() == RTPCodecType::Audio {
                     let config = PlaybackConfig {
@@ -454,12 +465,14 @@ fn setup_peer_connection_handlers(
     peer_connection.on_peer_connection_state_change(Box::new(
         move |state: RTCPeerConnectionState| {
             println!("Connection State changed: {}", state);
+            let playbacks = active_playbacks.clone();
             Box::pin(async move {
                 if state == RTCPeerConnectionState::Failed
                     || state == RTCPeerConnectionState::Disconnected
                     || state == RTCPeerConnectionState::Closed
                 {
                     println!("Peer connection: {}", state);
+                    playbacks.lock().await.clear();
                 }
             })
         },

@@ -4,7 +4,7 @@ use crate::webrtc_manager::WebRtcManager;
 use anyhow::Result;
 use clap::Parser;
 use daemon_protocol::voicechat::{
-    voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer}, GetInputVolumeRequest, GetInputVolumeResponse, GetStatusRequest, GetStatusResponse, SetInputVolumeRequest, SetInputVolumeResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse
+    voicechat_daemon_server::{VoicechatDaemon, VoicechatDaemonServer}, GetInputVolumeRequest, GetInputVolumeResponse, GetOutputVolumeRequest, GetOutputVolumeResponse, GetStatusRequest, GetStatusResponse, SetInputVolumeRequest, SetInputVolumeResponse, SetOutputVolumeRequest, SetOutputVolumeResponse, ShutdownRequest, ShutdownResponse, StartRequest, StartResponse, StopRequest, StopResponse
 };
 use tokio::sync::{mpsc, watch};
 use tonic::{Request as TonicRequest, Response, transport::Server};
@@ -108,6 +108,23 @@ impl VoicechatDaemon for VoiceChatService {
 
         self.send_command(Command::SetInputVolume(volume)).await?;
         Ok(Response::new(SetInputVolumeResponse {}))
+    }
+
+    async fn get_output_volume(
+        &self,
+        _: TonicRequest<GetOutputVolumeRequest>,
+    ) -> Result<Response<GetOutputVolumeResponse>, tonic::Status> {
+        todo!()
+    }
+
+    async fn set_output_volume(
+        &self,
+        request: TonicRequest<SetOutputVolumeRequest>,
+    ) -> Result<Response<SetOutputVolumeResponse>, tonic::Status> {
+        let volume = request.into_inner().volume;
+
+        self.send_command(Command::SetOutputVolume(volume)).await?;
+        Ok(Response::new(SetOutputVolumeResponse {}))
     }
 }
 
