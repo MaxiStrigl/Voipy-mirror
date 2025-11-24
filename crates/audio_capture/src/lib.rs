@@ -1,4 +1,7 @@
+mod agc;
+
 use anyhow::Result;
+use agc::Agc;
 use cpal::traits::HostTrait;
 use cpal::traits::{DeviceTrait, StreamTrait};
 use opus::Encoder;
@@ -10,11 +13,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 use webrtc::media::Sample;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
-use webrtc_audio_processing::VoiceDetectionLikelihood;
-use webrtc_audio_processing::{
-    Config as ApConfig, GainControl, GainControlMode, InitializationConfig, Processor,
-    VoiceDetection,
-};
+
 
 /// Custom error type for the capture library.
 #[derive(Debug, Error)]
@@ -57,13 +56,13 @@ pub struct Capture {
 }
 
 struct AudioProcessor {
-    ap: Processor,
     resampler: Option<Box<FftFixedInOut<f32>>>,
     input_channels: u16,
     output_channels: u16,
     ap_buffer: Vec<f32>,
     chunk_size: usize,
     volume: f32,
+    agc: Agc,
 }
 
 impl AudioProcessor {
@@ -73,30 +72,8 @@ impl AudioProcessor {
         ouptput_sample_rate: u32,
         output_channels: u16,
     ) -> Result<Self, CaptureError> {
-        let processing_config = InitializationConfig {
-            num_capture_channels: input_channels as i32,
-            num_render_channels: input_channels as i32,
-            ..InitializationConfig::default()
-        };
 
-        let mut ap = Processor::new(&processing_config).unwrap();
-
-        let ap_config = ApConfig {
-            echo_cancellation: None,
-            gain_control: Some(GainControl {
-                mode: GainControlMode::AdaptiveDigital,
-                target_level_dbfs: 3,
-                compression_gain_db: 15,
-                enable_limiter: true,
-            }),
-            noise_suppression: None,
-            voice_detection: Some(VoiceDetection {
-                detection_likelihood: VoiceDetectionLikelihood::High,
-            }),
-            enable_transient_suppressor: true,
-            enable_high_pass_filter: true,
-        };
-        ap.set_config(ap_config.clone());
+        let agc = Agc::new(input_sample_rate, input_channels.into());
 
         let resampler = if input_sample_rate != ouptput_sample_rate {
             println!(
@@ -119,13 +96,13 @@ impl AudioProcessor {
         let chunk_size = samples_per_10_ms_per_channel * input_channels as usize;
 
         Ok(Self {
-            ap,
             resampler,
             input_channels,
             output_channels,
             ap_buffer: Vec::new(),
             chunk_size,
             volume: 1.0,
+            agc,
         })
     }
 
@@ -134,24 +111,11 @@ impl AudioProcessor {
     }
 
     fn process(&mut self, data: &[f32]) -> Vec<f32> {
-        self.ap_buffer.extend_from_slice(data);
+        let mut processable_data = data.to_vec();
 
-        let num_chunks = self.ap_buffer.len() / self.chunk_size;
-        if num_chunks == 0 {
-            return Vec::new();
-        }
-
-        let processable_len = num_chunks * self.chunk_size;
-        let mut processable_data = self.ap_buffer.drain(..processable_len).collect::<Vec<_>>();
-
-        for chunk in processable_data.chunks_mut(self.chunk_size) {
-            if let Err(e) = self.ap.process_capture_frame(chunk) {
-                eprintln!("audio processing error: {}", e);
-            }
-        }
+        self.agc.process(&mut processable_data);
 
         let mut processed_data = std::borrow::Cow::from(processable_data);
-
 
         if let Some(resampler) = &mut self.resampler {
             let channels = self.input_channels as usize;
