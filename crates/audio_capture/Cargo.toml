@@ -6,9 +6,9 @@ edition.workspace = true
 [dependencies]
 anyhow.workspace = true
 cpal.workspace = true
-dagc = "0.1.1"
 fundsp = "0.20.0"
 opus.workspace = true
+ringbuf.workspace = true
 rubato.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

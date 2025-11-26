@@ -33,6 +33,14 @@ impl Agc {
         }
     }
 
+    pub fn get_envelope_db(&self) -> f32 {
+        if self.envelope <= 0.0 {
+            -120.0 // Return a very low dB value for silence or invalid envelope
+        } else {
+            20.0 * self.envelope.log10()
+        }
+    }
+
     pub fn process(&mut self, data: &mut [f32]) {
         for frame in data.chunks_mut(self.channels) {
             let peak = frame.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
