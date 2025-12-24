@@ -393,7 +393,7 @@ impl WebRtcManager {
                 println!("Setting input volume to: {}", volume);
 
                 if let Some(capture) = &mut self.capture {
-                    capture.set_volume(volume);
+                    // capture.set_volume(volume);
                 }
             }
             Command::SetOutputVolume(volume) => {
