@@ -283,10 +283,13 @@ struct AudioProcessor {
     input_channels: u16,
     encoder: Encoder,
     fx_chain: Box<dyn AudioUnit>,
+    post_chain: Box<dyn AudioUnit>,
     denoiser: DenoiseState<'static>,
     mono_buffer: Vec<f32>,
     denoise_buffer: Vec<f32>,
     opus_out: Vec<u8>,
+    gate_level: f32,
+    hold_frames: usize,
 }
 
 impl AudioProcessor {
@@ -298,8 +301,12 @@ impl AudioProcessor {
         )?;
 
         let chain = dcblock() >> highpass_hz(80.0, 0.707);
+        let post_chain = lowpass_hz(10000.0, 0.707);
 
         let mut fx_chain = Box::new(chain);
+        fx_chain.set_sample_rate(input_sample_rate as f64);
+
+        let mut fx_post_chain = Box::new(post_chain);
         fx_chain.set_sample_rate(input_sample_rate as f64);
 
         let denoiser = DenoiseState::new();
@@ -308,10 +315,13 @@ impl AudioProcessor {
             input_channels,
             encoder,
             fx_chain,
+            post_chain: fx_post_chain,
             denoiser: *denoiser,
             mono_buffer: Vec::new(),
             denoise_buffer: vec![0.0; 480],
             opus_out: vec![0u8; 4000],
+            gate_level: 0.0,
+            hold_frames: 0,
         })
     }
 
@@ -330,19 +340,6 @@ impl AudioProcessor {
             self.mono_buffer.push(filtered * SCALE_UP);
         }
 
-        // if self.input_channels == 1 {
-        //     self.mono_buffer.extend_from_slice(data);
-        // } else {
-        //     for frame in data.chunks_exact(self.input_channels as usize) {
-        //         let sum: f32 = frame.iter().sum();
-        //         self.mono_buffer.push(sum / self.input_channels as f32);
-        //     }
-        // }
-        //
-        // for sample in self.mono_buffer.iter_mut() {
-        //     *sample = self.fx_chain.filter_mono(*sample as f32) as f32;
-        // }
-
         let mut offset = 0;
         while offset + 480 <= self.mono_buffer.len() {
             let chunk = &self.mono_buffer[offset..offset + 480];
@@ -353,6 +350,11 @@ impl AudioProcessor {
             offset += 480;
         }
 
+        let open_threshold = 0.02;
+        let close_threshold = 0.008;
+        let release_speed = 0.005;
+        let hold_time_samples = (48.000 as f32 * 0.1) as usize;
+
         let mut max_amp = 0.0;
         for sample in self.mono_buffer.iter_mut() {
             *sample *= SCALE_DOWN;
@@ -361,10 +363,21 @@ impl AudioProcessor {
             max_amp = max_amp.max(abs);
         }
 
-        if max_amp < 0.02 {
-            for sample in self.mono_buffer.iter_mut() {
-                *sample = 0.0;
+        if max_amp > open_threshold {
+            self.gate_level = 1.0;
+            self.hold_frames = hold_time_samples;
+        } else if max_amp < close_threshold {
+            if self.hold_frames > 0 {
+                self.hold_frames -= Num::min(self.mono_buffer.len(), self.hold_frames);
             }
+            else {
+                self.gate_level = (self.gate_level - release_speed).max(0.0);
+            }
+        }
+
+        for sample in self.mono_buffer.iter_mut() {
+            *sample *= self.gate_level;
+            *sample = self.post_chain.filter_mono(*sample);
         }
 
         let output_size = self
