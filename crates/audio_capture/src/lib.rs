@@ -310,11 +310,14 @@ struct AudioProcessor {
 
 impl AudioProcessor {
     fn new(input_sample_rate: u32, input_channels: u16) -> Result<Self, CaptureError> {
-        let encoder = Encoder::new(
+        let mut encoder = Encoder::new(
             input_sample_rate,
             opus::Channels::Mono,
             opus::Application::Voip,
         )?;
+
+        encoder.set_bitrate(opus::Bitrate::Bits(32000))?;
+        encoder.set_vbr(true)?;
 
         let chain = dcblock() >> highpass_hz(80.0, 0.707);
         let post_chain = lowpass_hz(10000.0, 0.707);
@@ -323,7 +326,7 @@ impl AudioProcessor {
         fx_chain.set_sample_rate(input_sample_rate as f64);
 
         let mut fx_post_chain = Box::new(post_chain);
-        fx_chain.set_sample_rate(input_sample_rate as f64);
+        fx_post_chain.set_sample_rate(input_sample_rate as f64);
 
         let denoiser = DenoiseState::new();
 
