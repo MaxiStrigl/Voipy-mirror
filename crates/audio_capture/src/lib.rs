@@ -106,6 +106,18 @@ impl Capture {
             * stream_config.channels as usize;
 
         let worker_thread = std::thread::spawn(move || {
+            let core_ids = core_affinity::get_core_ids().unwrap();
+            core_affinity::set_for_current(core_ids[0]);
+
+            let thread_priority_handle =
+                match audio_thread_priority::promote_current_thread_to_real_time(512, 48000) {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        eprintln!("Failed to promote worker thread to realtime: {}", e);
+                        None
+                    }
+                };
+
             let mut processor =
                 AudioProcessor::new(stream_config.sample_rate.0, stream_config.channels)
                     .expect("Failed to create processor");
@@ -139,6 +151,10 @@ impl Capture {
                 } else {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
+            }
+
+            if let Some(handle) = thread_priority_handle {
+                let _ = audio_thread_priority::demote_current_thread_from_real_time(handle);
             }
         });
 
@@ -369,8 +385,7 @@ impl AudioProcessor {
         } else if max_amp < close_threshold {
             if self.hold_frames > 0 {
                 self.hold_frames -= Num::min(self.mono_buffer.len(), self.hold_frames);
-            }
-            else {
+            } else {
                 self.gate_level = (self.gate_level - release_speed).max(0.0);
             }
         }
