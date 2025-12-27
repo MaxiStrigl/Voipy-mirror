@@ -3,6 +3,7 @@
 mod agc;
 
 use anyhow::Result;
+use cpal::SupportedStreamConfigRange;
 use cpal::traits::DeviceTrait;
 use cpal::traits::HostTrait;
 use cpal::traits::StreamTrait;
@@ -239,60 +240,49 @@ fn setup_device(
 
     println!("Using input device: {}", device.name()?);
 
-    let desired_sample_rate = cpal::SampleRate(config.sample_rate);
-    let mut supported_configs: Vec<_> = device.supported_input_configs()?.collect();
+    let configs: Vec<_> = device.supported_input_configs()?.collect();
+    let target_rate = cpal::SampleRate(config.sample_rate);
+    let target_fmt = cpal::SampleFormat::F32;
 
-    supported_configs.sort_by(|a, b| b.max_sample_rate().cmp(&a.max_sample_rate()));
-
-    // Find the best config
-    let supported_config_range = supported_configs
-        .iter()
-        .find(|c| {
-            c.channels() == config.channels
-                && c.min_sample_rate() <= desired_sample_rate
-                && c.max_sample_rate() >= desired_sample_rate
-        })
-        .or_else(|| {
-            supported_configs.iter().find(|c| {
-                c.channels() == 2
-                    && c.min_sample_rate() <= desired_sample_rate
-                    && c.max_sample_rate() >= desired_sample_rate
-            })
-        })
-        .or_else(|| {
-            supported_configs.iter().find(|c| {
-                c.channels() == 1
-                    && c.min_sample_rate() <= desired_sample_rate
-                    && c.max_sample_rate() >= desired_sample_rate
-            })
-        })
-        // No config supports our rate take best we can get
-        .or_else(|| {
-            supported_configs
-                .iter()
-                .find(|c| c.channels() == config.channels)
-                .or_else(|| supported_configs.iter().find(|c| c.channels() == 2))
-                .or_else(|| supported_configs.iter().find(|c| c.channels() == 1))
-        })
-        // Just to be max robust: If we still did not find anything take whatever we can get
-        .or_else(|| supported_configs.iter().next())
-        .ok_or(CaptureError::NoSupportedConfig)?;
-
-    let sample_format = supported_config_range.sample_format();
-
-    let sample_rate_to_use = if supported_config_range.min_sample_rate() <= desired_sample_rate
-        && supported_config_range.max_sample_rate() >= desired_sample_rate
-    {
-        desired_sample_rate
-    } else {
-        supported_config_range.max_sample_rate()
+    let supports_48k = |c: &SupportedStreamConfigRange| {
+        (c.min_sample_rate()..=c.max_sample_rate()).contains(&target_rate)
     };
 
-    let stream_config = supported_config_range
-        .with_sample_rate(sample_rate_to_use)
-        .config();
+    let best_config = configs
+        .iter()
+        // `F32, Mono, 48k
+        .find(|c| c.sample_format() == target_fmt && c.channels() == 1 && supports_48k(c))
+        // F32, Stereo, 48k
+        .or_else(|| {
+            configs
+                .iter()
+                .find(|c| c.sample_format() == target_fmt && c.channels() == 2 && supports_48k(c))
+        })
+        // F32, any, 48k
+        .or_else(|| {
+            configs
+                .iter()
+                .find(|c| c.sample_format() == target_fmt && supports_48k(c))
+        })
+        // F32, Mono, any
+        .or_else(|| {
+            configs
+                .iter()
+                .find(|c| c.sample_format() == target_fmt && c.channels() == 1)
+        })
+        // F32, any, any
+        .or_else(|| configs.iter().find(|c| c.sample_format() == target_fmt))
+        .or_else(|| configs.first())
+        .ok_or(CaptureError::NoSupportedConfig)?;
 
-    Ok((device, stream_config, sample_format))
+    let final_rate =
+        target_rate.clamp(best_config.min_sample_rate(), best_config.max_sample_rate());
+    let final_config = best_config.with_sample_rate(final_rate);
+
+    dbg!(&final_config);
+    dbg!(&final_config.sample_format());
+
+    Ok((device, final_config.config(), final_config.sample_format()))
 }
 
 struct AudioProcessor {
