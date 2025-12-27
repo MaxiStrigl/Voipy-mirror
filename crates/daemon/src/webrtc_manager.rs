@@ -400,7 +400,7 @@ impl WebRtcManager {
                 println!("Setting output volume to: {}", volume);
 
                 for playback in self.playbacks.lock().await.iter_mut() {
-                    playback.set_volume(volume);
+                    // playback.set_volume(volume);
                 }
             }
         }
