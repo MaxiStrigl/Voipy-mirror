@@ -1,5 +1,4 @@
 /// Audio Capture
-///
 mod agc;
 
 use anyhow::Result;
@@ -15,6 +14,8 @@ use ringbuf::traits::Consumer;
 use ringbuf::traits::{Observer, Producer, Split};
 use ringbuf::wrap::caching::Caching;
 use ringbuf::{HeapRb, SharedRb};
+use rubato::ResampleError;
+use rubato::Resampler;
 use rubato::ResamplerConstructionError;
 use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
@@ -45,8 +46,10 @@ pub enum CaptureError {
     OpusError(#[from] opus::Error),
     #[error("An cpal build stream error occured: {0}")]
     BuildStreamError(#[from] cpal::BuildStreamError),
-    #[error("An rubato error occured: {0}")]
-    RubatoError(#[from] ResamplerConstructionError),
+    #[error("an rubato error occured: {0}")]
+    Rubatoerror(#[from] ResamplerConstructionError),
+    #[error("an rubato resample error occured: {0}")]
+    RubatoResampleError(#[from] ResampleError),
 }
 
 /// Configurations for the audio capture stream
@@ -70,9 +73,11 @@ impl SharedVolume {
     fn new(val: f32) -> Self {
         Self(AtomicU32::new(val.to_bits()))
     }
+    
     fn get(&self) -> f32 {
         f32::from_bits(self.0.load(Relaxed))
     }
+
     fn set(&self, val: f32) {
         self.0.store(val.to_bits(), Relaxed);
     }
@@ -136,6 +141,10 @@ impl Capture {
                             continue;
                         }
                     };
+
+                    if processed_data.is_empty() {
+                        continue;
+                    }
 
                     let track_clone = track.clone();
                     let out_bytes = processed_data.to_vec();
@@ -288,6 +297,9 @@ fn setup_device(
 struct AudioProcessor {
     input_channels: u16,
     encoder: Encoder,
+    resampler: Option<rubato::FftFixedInOut<f32>>,
+    resample_in_buffer: Vec<Vec<f32>>,
+    resample_out_buffer: Vec<Vec<f32>>,
     fx_chain: Box<dyn AudioUnit>,
     post_chain: Box<dyn AudioUnit>,
     denoiser: DenoiseState<'static>,
@@ -296,15 +308,12 @@ struct AudioProcessor {
     opus_out: Vec<u8>,
     gate_level: f32,
     hold_frames: usize,
+    output_staging_buffer: Vec<f32>,
 }
 
 impl AudioProcessor {
     fn new(input_sample_rate: u32, input_channels: u16) -> Result<Self, CaptureError> {
-        let mut encoder = Encoder::new(
-            input_sample_rate,
-            opus::Channels::Mono,
-            opus::Application::Voip,
-        )?;
+        let mut encoder = Encoder::new(48000, opus::Channels::Mono, opus::Application::Voip)?;
 
         encoder.set_bitrate(opus::Bitrate::Bits(32000))?;
         encoder.set_vbr(true)?;
@@ -320,6 +329,16 @@ impl AudioProcessor {
 
         let denoiser = DenoiseState::new();
 
+        let (resampler, resample_in_buffer, resample_out_buffer) = if input_sample_rate != 48000 {
+            let resampler =
+                rubato::FftFixedInOut::<f32>::new(input_sample_rate as usize, 48000, 1024, 1)?;
+            let in_buf = resampler.input_buffer_allocate(true);
+            let out_buf = resampler.output_buffer_allocate(true);
+            (Some(resampler), in_buf, out_buf)
+        } else {
+            (None, Vec::new(), Vec::new())
+        };
+
         Ok(Self {
             input_channels,
             encoder,
@@ -331,6 +350,10 @@ impl AudioProcessor {
             opus_out: vec![0u8; 4000],
             gate_level: 0.0,
             hold_frames: 0,
+            resampler,
+            resample_in_buffer,
+            resample_out_buffer,
+            output_staging_buffer: Vec::with_capacity(4800),
         })
     }
 
@@ -340,58 +363,93 @@ impl AudioProcessor {
         const SCALE_UP: f32 = 32767.0;
         const SCALE_DOWN: f32 = 1.0 / 32767.0;
 
+        // to Mono
         for frame in data.chunks_exact(self.input_channels as usize) {
             let sum: f32 = frame.iter().sum();
             let mono = sum / self.input_channels as f32;
 
             let filtered = self.fx_chain.filter_mono(mono);
 
-            self.mono_buffer.push(filtered * SCALE_UP);
+            self.mono_buffer.push(filtered);
         }
 
-        let mut offset = 0;
-        while offset + 480 <= self.mono_buffer.len() {
-            let chunk = &self.mono_buffer[offset..offset + 480];
-            self.denoiser.process_frame(&mut self.denoise_buffer, chunk);
+        // resample
+        if let Some(ref mut resampler) = self.resampler {
+            while self.mono_buffer.len() >= resampler.input_frames_next() {
+                let frames_needed = resampler.input_frames_next();
 
-            self.mono_buffer[offset..offset + 480].copy_from_slice(&self.denoise_buffer);
+                self.resample_in_buffer[0].copy_from_slice(&self.mono_buffer[..frames_needed]);
+                self.mono_buffer.drain(..frames_needed);
 
-            offset += 480;
-        }
+                let (_, len) = resampler
+                    .process_into_buffer(
+                        &self.resample_in_buffer,
+                        &mut self.resample_out_buffer,
+                        None,
+                    )
+                    .map_err(|e| CaptureError::RubatoResampleError(e))?;
 
-        let open_threshold = 0.02;
-        let close_threshold = 0.008;
-        let release_speed = 0.005;
-        let hold_time_samples = (48.000 as f32 * 0.1) as usize;
-
-        let mut max_amp = 0.0;
-        for sample in self.mono_buffer.iter_mut() {
-            *sample *= SCALE_DOWN;
-
-            let abs = sample.abs();
-            max_amp = max_amp.max(abs);
-        }
-
-        if max_amp > open_threshold {
-            self.gate_level = 1.0;
-            self.hold_frames = hold_time_samples;
-        } else if max_amp < close_threshold {
-            if self.hold_frames > 0 {
-                self.hold_frames -= Num::min(self.mono_buffer.len(), self.hold_frames);
-            } else {
-                self.gate_level = (self.gate_level - release_speed).max(0.0);
+                self.output_staging_buffer
+                    .extend_from_slice(&self.resample_out_buffer[0][..len]);
             }
+        } else {
+            self.output_staging_buffer
+                .extend(self.mono_buffer.drain(..));
         }
 
-        for sample in self.mono_buffer.iter_mut() {
-            *sample *= self.gate_level;
-            *sample = self.post_chain.filter_mono(*sample);
+        // 20 ms
+        if self.output_staging_buffer.len() >= 960 {
+            let mut offset = 0;
+            let chunk = &mut self.output_staging_buffer[..960];
+
+            while offset + 480 <= chunk.len() {
+                let sub_chunk = &mut chunk[offset..offset + 480];
+                sub_chunk.iter_mut().for_each(|f| *f *= SCALE_UP);
+                self.denoiser
+                    .process_frame(&mut self.denoise_buffer, sub_chunk);
+
+                chunk[offset..offset + 480].copy_from_slice(&self.denoise_buffer);
+                offset += 480;
+            }
+
+            let open_threshold = 0.02;
+            let close_threshold = 0.008;
+            let release_speed = 0.005;
+            let hold_time_samples = (48.000 as f32 * 0.1) as usize;
+
+            let mut max_amp = 0.0;
+            for sample in chunk.iter_mut() {
+                *sample *= SCALE_DOWN;
+
+                let abs = sample.abs();
+                max_amp = max_amp.max(abs);
+            }
+
+            if max_amp > open_threshold {
+                self.gate_level = 1.0;
+                self.hold_frames = hold_time_samples;
+            } else if max_amp < close_threshold {
+                if self.hold_frames > 0 {
+                    self.hold_frames = self.hold_frames.saturating_sub(chunk.len())
+                } else {
+                    self.gate_level = (self.gate_level - release_speed).max(0.0);
+                }
+            }
+
+            for sample in chunk.iter_mut() {
+                *sample *= self.gate_level;
+                *sample = self.post_chain.filter_mono(*sample);
+            }
+
+            let output_size = self
+                .encoder
+                .encode_float(chunk, &mut self.opus_out)?;
+
+            self.output_staging_buffer.drain(0..960);
+
+            return Ok(&self.opus_out[..output_size]);
         }
 
-        let output_size = self
-            .encoder
-            .encode_float(&self.mono_buffer, &mut self.opus_out)?;
-
-        Ok(&self.opus_out[..output_size])
+        Ok(&[])
     }
 }
