@@ -1,16 +1,14 @@
 use anyhow::Result;
 use cpal::traits::DeviceTrait;
 use cpal::traits::{HostTrait, StreamTrait};
-use cpal::{BuildStreamError, Device, SampleFormat, StreamConfig, SupportedStreamConfigRange};
+use cpal::{Device, SampleFormat, StreamConfig, SupportedStreamConfigRange};
 use opus::Decoder;
 use ringbuf::traits::*;
-use ringbuf::{Cons, HeapRb};
-use rubato::{Resampler, ResamplerConstructionError};
-use std::borrow::Cow;
+use ringbuf::HeapRb;
+use rubato::{ResampleError, Resampler, ResamplerConstructionError};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
-use webrtc::media::io::sample_builder;
 use webrtc::track::track_remote::TrackRemote;
 
 type ProdType = ringbuf::wrap::caching::Caching<
@@ -45,6 +43,8 @@ pub enum PlaybackError {
     BuildStreamError(#[from] cpal::BuildStreamError),
     #[error("An rubato error occured: {0}")]
     RubatoError(#[from] ResamplerConstructionError),
+    #[error("an rubato resample error occured: {0}")]
+    RubatoResampleError(#[from] ResampleError),
 }
 
 /// Configurations for the audio playback stream
@@ -89,7 +89,6 @@ impl JitterMetrics {
         if self.underrun_count == 0 {
             eprint!("decaying underrun");
             self.target_samples = (self.target_samples - 1).max(self.min_samples);
-            dbg!(self.target_samples);
         } else {
             eprint!("decaying underrun 2");
             self.underrun_count = 0;
@@ -105,7 +104,6 @@ pub struct Playback {
 impl Playback {
     pub fn new(config: PlaybackConfig) -> Result<Self, PlaybackError> {
         let (device, stream_config, sample_format) = setup_device(&config)?;
-        dbg!(&stream_config);
 
         let (mut prod, cons): (ProdType, ConsType) = setup_ringbuffer();
 
@@ -116,6 +114,23 @@ impl Playback {
         let mut decoder_buffer = vec![0.0f32; 5760];
 
         let volume = Arc::new(Mutex::new(0.0));
+        let mut resample_staging_buffer = Vec::<f32>::new();
+
+        let (mut resampler, mut resample_in_buf, mut resample_out_buf) =
+            if stream_config.sample_rate.0 != 48000 {
+                let resampler = rubato::FftFixedInOut::<f32>::new(
+                    48000,
+                    stream_config.sample_rate.0 as usize,
+                    1024,
+                    1,
+                )?;
+                let in_buf = resampler.input_buffer_allocate(true);
+                let out_buf = resampler.output_buffer_allocate(true);
+
+                (Some(resampler), in_buf, out_buf)
+            } else {
+                (None, Vec::new(), Vec::new())
+            };
 
         // tokio buffer to receive packages over the internet
         config.tokio_handle.spawn(async move {
@@ -124,20 +139,56 @@ impl Playback {
 
                 match decoder.decode_float(&payload, &mut decoder_buffer, false) {
                     Ok(count) => {
-                        let decoded = &decoder_buffer[..count];
-
-                        if stream_config.channels == 2 {
-                            for &sample in decoded {
-                                let _ = prod.try_push(sample);
-                                let _ = prod.try_push(sample);
-                            }
-                        } else {
-                            prod.push_slice(decoded);
+                        for i in 0..count {
+                            resample_staging_buffer.push(decoder_buffer[i]);
                         }
+
+                        // let decoded = &decoder_buffer[..count];
+
+                        // if stream_config.channels == 2 {
+                        //     for &sample in decoded {
+                        //         let _ = prod.try_push(sample);
+                        //         let _ = prod.try_push(sample);
+                        //     }
+                        // } else {
+                        //     prod.push_slice(decoded);
+                        // }
                     }
                     Err(_) => {
                         eprintln!("Failed to decode")
                     }
+                }
+
+                if let Some(ref mut resampler) = resampler {
+                    while resample_staging_buffer.len() >= resampler.input_frames_next() {
+                        let frames_needed = resampler.input_frames_next();
+
+                        resample_in_buf[0]
+                            .copy_from_slice(&resample_staging_buffer[..frames_needed]);
+                        resample_staging_buffer.drain(..frames_needed);
+
+                        match resampler.process_into_buffer(
+                            &resample_in_buf,
+                            &mut resample_out_buf,
+                            None,
+                        ) {
+                            Ok((_, len)) => {
+                                for &sample in &resample_out_buf[0][..len] {
+                                    for _ in 0..stream_config.channels {
+                                        let _ = prod.try_push(sample);
+                                    }
+                                }
+                            }
+                            Err(e) => eprintln!("resample error: {}", e),
+                        }
+                    }
+                } else {
+                    for &sample in resample_staging_buffer.iter() {
+                        for _ in 0..stream_config.channels {
+                            let _ = prod.try_push(sample);
+                        }
+                    }
+                    resample_staging_buffer.clear();
                 }
             }
         });
@@ -277,9 +328,6 @@ fn setup_device(
     let final_rate =
         target_rate.clamp(best_config.min_sample_rate(), best_config.max_sample_rate());
     let final_config = best_config.with_sample_rate(final_rate);
-
-    dbg!(&final_config);
-    dbg!(&final_config.sample_format());
 
     Ok((device, final_config.config(), final_config.sample_format()))
 }
