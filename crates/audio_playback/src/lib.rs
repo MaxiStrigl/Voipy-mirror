@@ -3,9 +3,10 @@ use cpal::traits::DeviceTrait;
 use cpal::traits::{HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig, SupportedStreamConfigRange};
 use opus::Decoder;
-use ringbuf::traits::*;
 use ringbuf::HeapRb;
+use ringbuf::traits::*;
 use rubato::{ResampleError, Resampler, ResamplerConstructionError};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -68,11 +69,11 @@ struct JitterMetrics {
 
 impl JitterMetrics {
     fn new(sample_rate: u32, channels: u16) -> Self {
-        let base = (sample_rate as f32 * channels as f32 * 0.2) as usize; //20ms
+        let base = (sample_rate as f32 * channels as f32 * 0.02) as usize; //20ms
         Self {
-            target_samples: base,   // 20ms
-            min_samples: base,      // 20ms
-            max_samples: base * 25, //500 ms
+            target_samples: 3 * base, // 20ms
+            min_samples: base,        // 20ms
+            max_samples: base * 25,   //500 ms
             underrun_count: 0,
         }
     }
@@ -98,7 +99,7 @@ impl JitterMetrics {
 
 pub struct Playback {
     _stream: cpal::Stream,
-    volume: Arc<Mutex<f32>>,
+    volume: Arc<AtomicU32>,
 }
 
 impl Playback {
@@ -106,14 +107,15 @@ impl Playback {
         let (device, stream_config, sample_format) = setup_device(&config)?;
 
         let (mut prod, cons): (ProdType, ConsType) = setup_ringbuffer();
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
-        let stream = setup_output_stream(sample_format, device, &stream_config, cons)?;
+        let stream =
+            setup_output_stream(sample_format, device, &stream_config, cons, volume.clone())?;
 
         let track = config.track;
         let mut decoder = Decoder::new(48000, opus::Channels::Mono)?;
         let mut decoder_buffer = vec![0.0f32; 5760];
 
-        let volume = Arc::new(Mutex::new(0.0));
         let mut resample_staging_buffer = Vec::<f32>::new();
 
         let (mut resampler, mut resample_in_buf, mut resample_out_buf) =
@@ -142,17 +144,6 @@ impl Playback {
                         for i in 0..count {
                             resample_staging_buffer.push(decoder_buffer[i]);
                         }
-
-                        // let decoded = &decoder_buffer[..count];
-
-                        // if stream_config.channels == 2 {
-                        //     for &sample in decoded {
-                        //         let _ = prod.try_push(sample);
-                        //         let _ = prod.try_push(sample);
-                        //     }
-                        // } else {
-                        //     prod.push_slice(decoded);
-                        // }
                     }
                     Err(_) => {
                         eprintln!("Failed to decode")
@@ -202,6 +193,15 @@ impl Playback {
             volume,
         })
     }
+
+    pub fn get_volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    pub fn set_volume(&mut self, value: f32) {
+        // println!("Changed volume to: {}", value);
+        self.volume.store(value.to_bits(), Ordering::Release);
+    }
 }
 
 fn setup_output_stream(
@@ -209,6 +209,7 @@ fn setup_output_stream(
     device: Device,
     stream_config: &StreamConfig,
     mut consumer: ConsType,
+    volume: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, PlaybackError> {
     let mut metrics = JitterMetrics::new(stream_config.sample_rate.0, stream_config.channels);
     let mut is_buffering = true;
@@ -227,6 +228,13 @@ fn setup_output_stream(
         }
 
         let read = consumer.pop_slice(data);
+
+        let vol = f32::from_bits(volume.load(Ordering::Relaxed));
+        if (vol - 1.0).abs() > f32::EPSILON {
+            for sample in data.iter_mut() {
+                *sample *= vol;
+            }
+        }
 
         if read < data.len() {
             // Underrun
