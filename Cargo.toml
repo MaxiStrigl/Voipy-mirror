@@ -42,3 +42,7 @@ lto = "thin"
 codegen-units = 1
 strip = true
 opt-level = 3
+
+[workspace.metadata.release]
+shared-version = true
+tag-name = "v{{version}}"
