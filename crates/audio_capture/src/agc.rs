@@ -24,8 +24,8 @@ impl Agc {
             sample_rate: sample_rate as f32,
             channels,
             target_level: 0.05,
-            max_gain: 30.0,
-            noise_floor: 0.01,
+            max_gain: 3.0,
+            noise_floor: 0.05,
             current_gain: 1.0,
             envelope: 0.0,
             attack_coeff,
@@ -53,7 +53,7 @@ impl Agc {
                     self.release_coeff * self.envelope + (1.0 - self.release_coeff) * peak;
             }
 
-            let mut gain = self.current_gain;
+            let mut gain = 1.0;
 
             if self.envelope > self.noise_floor {
                 let desired_gain = self.target_level / self.envelope.max(0.0000001);
@@ -70,7 +70,7 @@ impl Agc {
             for sample in frame.iter_mut() {
                 *sample *= self.current_gain;
 
-                *sample = sample.clamp(-1.0, 1.0);
+                *sample = *sample / (1.0 + sample.abs()) 
             }
         }
     }

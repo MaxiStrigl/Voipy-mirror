@@ -73,7 +73,7 @@ impl SharedVolume {
     fn new(val: f32) -> Self {
         Self(AtomicU32::new(val.to_bits()))
     }
-    
+
     fn get(&self) -> f32 {
         f32::from_bits(self.0.load(Relaxed))
     }
@@ -288,9 +288,6 @@ fn setup_device(
         target_rate.clamp(best_config.min_sample_rate(), best_config.max_sample_rate());
     let final_config = best_config.with_sample_rate(final_rate);
 
-    dbg!(&final_config);
-    dbg!(&final_config.sample_format());
-
     Ok((device, final_config.config(), final_config.sample_format()))
 }
 
@@ -309,6 +306,7 @@ struct AudioProcessor {
     gate_level: f32,
     hold_frames: usize,
     output_staging_buffer: Vec<f32>,
+    agc: agc::Agc,
 }
 
 impl AudioProcessor {
@@ -318,8 +316,8 @@ impl AudioProcessor {
         encoder.set_bitrate(opus::Bitrate::Bits(32000))?;
         encoder.set_vbr(true)?;
 
-        let chain = dcblock() >> highpass_hz(80.0, 0.707);
-        let post_chain = lowpass_hz(10000.0, 0.707);
+        let chain = dcblock() >> highpass_hz(120.0, 0.707);
+        let post_chain = lowpass_hz(6000.0, 0.707);
 
         let mut fx_chain = Box::new(chain);
         fx_chain.set_sample_rate(input_sample_rate as f64);
@@ -328,6 +326,8 @@ impl AudioProcessor {
         fx_post_chain.set_sample_rate(input_sample_rate as f64);
 
         let denoiser = DenoiseState::new();
+
+        let agc = agc::Agc::new(48000, 1);
 
         let (resampler, resample_in_buffer, resample_out_buffer) = if input_sample_rate != 48000 {
             let resampler =
@@ -354,6 +354,7 @@ impl AudioProcessor {
             resample_in_buffer,
             resample_out_buffer,
             output_staging_buffer: Vec::with_capacity(4800),
+            agc,
         })
     }
 
@@ -397,6 +398,8 @@ impl AudioProcessor {
                 .extend(self.mono_buffer.drain(..));
         }
 
+        let mut max_speech_prob = 0.0;
+
         // 20 ms
         if self.output_staging_buffer.len() >= 960 {
             let mut offset = 0;
@@ -405,17 +408,19 @@ impl AudioProcessor {
             while offset + 480 <= chunk.len() {
                 let sub_chunk = &mut chunk[offset..offset + 480];
                 sub_chunk.iter_mut().for_each(|f| *f *= SCALE_UP);
-                self.denoiser
-                    .process_frame(&mut self.denoise_buffer, sub_chunk);
+                max_speech_prob = max_speech_prob.max(
+                    self.denoiser
+                        .process_frame(&mut self.denoise_buffer, sub_chunk),
+                );
 
                 chunk[offset..offset + 480].copy_from_slice(&self.denoise_buffer);
                 offset += 480;
             }
 
-            let open_threshold = 0.02;
-            let close_threshold = 0.008;
-            let release_speed = 0.005;
-            let hold_time_samples = (48.000 as f32 * 0.1) as usize;
+            let open_threshold = 0.03;
+            let close_threshold = 0.01;
+            let release_speed = 0.02;
+            let hold_time_samples = (48000.0 as f32 * 0.1) as usize;
 
             let mut max_amp = 0.0;
             for sample in chunk.iter_mut() {
@@ -425,10 +430,10 @@ impl AudioProcessor {
                 max_amp = max_amp.max(abs);
             }
 
-            if max_amp > open_threshold {
+            if max_amp > open_threshold && max_speech_prob > 0.4 {
                 self.gate_level = 1.0;
                 self.hold_frames = hold_time_samples;
-            } else if max_amp < close_threshold {
+            } else if max_amp < close_threshold  || max_speech_prob <= 0.4{
                 if self.hold_frames > 0 {
                     self.hold_frames = self.hold_frames.saturating_sub(chunk.len())
                 } else {
@@ -438,12 +443,17 @@ impl AudioProcessor {
 
             for sample in chunk.iter_mut() {
                 *sample *= self.gate_level;
+            }
+
+            if max_speech_prob > 0.4 {
+                self.agc.process(chunk);
+            }
+
+            for sample in chunk.iter_mut() {
                 *sample = self.post_chain.filter_mono(*sample);
             }
 
-            let output_size = self
-                .encoder
-                .encode_float(chunk, &mut self.opus_out)?;
+            let output_size = self.encoder.encode_float(chunk, &mut self.opus_out)?;
 
             self.output_staging_buffer.drain(0..960);
 
