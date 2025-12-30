@@ -16,4 +16,3 @@ rubato.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 webrtc.workspace = true
-webrtc-audio-processing.workspace = true
