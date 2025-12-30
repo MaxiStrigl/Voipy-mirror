@@ -80,7 +80,6 @@ impl JitterMetrics {
 
     /// Increase target if a underrun happens
     fn record_underrun(&mut self) {
-        eprint!("recoded underrun");
         self.underrun_count += 1;
         self.target_samples = (self.target_samples + self.min_samples).min(self.max_samples);
     }
@@ -88,10 +87,8 @@ impl JitterMetrics {
     /// Slowly decay target if things are stable
     fn decay_target(&mut self) {
         if self.underrun_count == 0 {
-            eprint!("decaying underrun");
             self.target_samples = (self.target_samples - 1).max(self.min_samples);
         } else {
-            eprint!("decaying underrun 2");
             self.underrun_count = 0;
         }
     }

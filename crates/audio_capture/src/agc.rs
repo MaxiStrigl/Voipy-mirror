@@ -24,7 +24,7 @@ impl Agc {
             sample_rate: sample_rate as f32,
             channels,
             target_level: 0.05,
-            max_gain: 3.0,
+            max_gain: 6.0,
             noise_floor: 0.05,
             current_gain: 1.0,
             envelope: 0.0,
