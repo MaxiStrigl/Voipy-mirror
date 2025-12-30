@@ -35,11 +35,13 @@ tonic-prost-build = "0.14.2"
 ringbuf = "0.4.8"
 warp = { version = "0.4.2", features = ["server", "websocket"] }
 webrtc = "0.14.0"
-webrtc-audio-processing = { version="0.5.0", features = ["bundled"] }
-
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = true
 opt-level = 3
+
+[workspace.metadata.release]
+shared-version = true
+tag-name = "v{{version}}"

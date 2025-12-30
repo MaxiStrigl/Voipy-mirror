@@ -5,8 +5,13 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+audio_thread_priority = "0.34.0"
+core_affinity = "0.8.3"
 cpal.workspace = true
+fundsp = "0.20.0"
+nnnoiseless = "0.5.2"
 opus.workspace = true
+ringbuf.workspace = true
 rubato.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

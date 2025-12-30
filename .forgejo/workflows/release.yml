@@ -1,0 +1,141 @@
+name: Release
+
+on: 
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-linux:
+    runs-on: docker
+    container: 
+      image: rust:latest
+    steps:
+      - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf )
+        run: |
+          apt-get update
+          apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler libdbus-1-dev pkg-config libclang-dev
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+          apt-get install -y nodejs
+
+      - name: Checkout Code
+        uses: https://github.com/actions/checkout@v3
+
+      - name: Build voipyd (daemon)
+        run: cargo build --release --package voipyd 
+
+      - name: Build (voipy) cli-client 
+        run: cargo build --release --package  voipy
+
+      - name: Build voipy-signaling-server
+        run: cargo build --release --package voipy-signaling-server
+
+      - name: Package Linux client
+        run: |
+          mkdir release-linux
+          cp target/release/voipyd ./release-linux
+          cp target/release/voipy ./release-linux
+          cp target/release/voipy-signaling-server ./release-linux
+      
+      - name: Upload client artifacts
+        uses: https://github.com/actions/upload-artifact@v3
+        with:
+          name: linux-build
+          path: release-linux
+          if-no-files-found: error
+
+  build-windows:
+      runs-on: docker
+      container: 
+        image: rust:latest
+      steps:
+        - name: Install Dependencies (Node, libasound2-dev, cmake, protobuf, mingw-w64)
+          run: |
+            apt-get update
+            apt-get install -y curl ca-certificates libasound2-dev cmake protobuf-compiler mingw-w64 libdbus-1-dev pkg-config
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+            apt-get install -y nodejs
+
+        - name: Checkout Code
+          uses: https://github.com/actions/checkout@v3
+
+        - name: Add Windows target
+          run: rustup target add x86_64-pc-windows-gnu
+
+        - name: Build voipyd (daemon)
+          run: cargo build --release --package voipyd --target x86_64-pc-windows-gnu
+
+        - name: Build (voipy) cli-client 
+          run: cargo build --release --package  voipy --target x86_64-pc-windows-gnu
+
+        - name: Package Windows
+          run: |
+            mkdir release-windows
+            cp target/x86_64-pc-windows-gnu/release/voipyd.exe ./release-windows
+            cp target/x86_64-pc-windows-gnu/release/voipy.exe ./release-windows
+
+        - name: Upload artifacts
+          uses: https://github.com/actions/upload-artifact@v3
+          with:
+            name: windows-build
+            path: release-windows
+            if-no-files-found: error
+
+  publish-release:
+    needs: [build-linux, build-windows]
+    runs-on: docker
+    container:
+      image: rust:latest
+    steps:
+      - name: Install Dependencies
+        run: |
+          apt-get update && apt-get install -y curl git zip
+          curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - 
+          apt-get install -y nodejs  
+
+      - name: Checkout Code
+        uses: https://github.com/actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Generate Changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            git log --pretty=format:"- **%s**%n%b" > CHANGELOG.txt
+          else
+            git log ${PREV_TAG}..HEAD --pretty=format:"- **%s**%n%b" > CHANGELOG.txt
+          fi
+
+      - name: Download Linux artifacts
+        uses: https://github.com/actions/download-artifact@v3
+        with:
+          name: linux-build
+          path: artifacts/release-linux
+
+      - name: Download Windows artifacts
+        uses: https://github.com/actions/download-artifact@v3
+        with:
+          name: windows-build
+          path: artifacts/release-windows
+
+      - name: Package Assets
+        run: |
+          # Compress Linux artifacts
+          tar -czvf voipy-linux-${{ github.ref_name }}.tar.gz -C artifacts/release-linux .
+          
+          # Compress Windows artifacts
+          cd artifacts/release-windows
+          zip -r ../../voipy-windows-${{ github.ref_name }}.zip .
+          cd ../..
+
+      - name: Create Release
+        uses: https://github.com/softprops/action-gh-release@v1
+        with:
+          name: voipy ${{ github.ref_name }}
+          body_path: CHANGELOG.txt
+          files: |
+            voipy-linux-${{ github.ref_name }}.tar.gz
+            voipy-windows-${{ github.ref_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

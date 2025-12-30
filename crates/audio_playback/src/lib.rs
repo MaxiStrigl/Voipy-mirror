@@ -1,15 +1,27 @@
 use anyhow::Result;
 use cpal::traits::DeviceTrait;
 use cpal::traits::{HostTrait, StreamTrait};
+use cpal::{Device, SampleFormat, StreamConfig, SupportedStreamConfigRange};
 use opus::Decoder;
 use ringbuf::HeapRb;
 use ringbuf::traits::*;
-use rubato::{Resampler, ResamplerConstructionError};
-use std::borrow::Cow;
+use rubato::{ResampleError, Resampler, ResamplerConstructionError};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use webrtc::track::track_remote::TrackRemote;
+
+type ProdType = ringbuf::wrap::caching::Caching<
+    Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
+    true,
+    false,
+>;
+type ConsType = ringbuf::wrap::caching::Caching<
+    Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
+    false,
+    true,
+>;
 
 /// Custom error type for the playback library.
 #[derive(Debug, Error)]
@@ -22,6 +34,8 @@ pub enum PlaybackError {
     DeviceNameError(#[from] cpal::DeviceNameError),
     #[error("A cpal supported configs error occured: {0}")]
     SupportedStreamConfigsError(#[from] cpal::SupportedStreamConfigsError),
+    #[error("An invalid format was provided {0}")]
+    UnsupportedFormat(SampleFormat),
     #[error("An invalid number of channels was provided {0}")]
     InvlaidChannelCount(u32),
     #[error("An Opus error occured: {0}")]
@@ -30,6 +44,8 @@ pub enum PlaybackError {
     BuildStreamError(#[from] cpal::BuildStreamError),
     #[error("An rubato error occured: {0}")]
     RubatoError(#[from] ResamplerConstructionError),
+    #[error("an rubato resample error occured: {0}")]
+    RubatoResampleError(#[from] ResampleError),
 }
 
 /// Configurations for the audio playback stream
@@ -44,244 +60,279 @@ pub struct PlaybackConfig {
     pub channels: u16,
 }
 
+struct JitterMetrics {
+    target_samples: usize,
+    min_samples: usize,
+    max_samples: usize,
+    underrun_count: usize,
+}
+
+impl JitterMetrics {
+    fn new(sample_rate: u32, channels: u16) -> Self {
+        let base = (sample_rate as f32 * channels as f32 * 0.02) as usize; //20ms
+        Self {
+            target_samples: 3 * base, // 20ms
+            min_samples: base,        // 20ms
+            max_samples: base * 25,   //500 ms
+            underrun_count: 0,
+        }
+    }
+
+    /// Increase target if a underrun happens
+    fn record_underrun(&mut self) {
+        self.underrun_count += 1;
+        self.target_samples = (self.target_samples + self.min_samples).min(self.max_samples);
+    }
+
+    /// Slowly decay target if things are stable
+    fn decay_target(&mut self) {
+        if self.underrun_count == 0 {
+            self.target_samples = (self.target_samples - 1).max(self.min_samples);
+        } else {
+            self.underrun_count = 0;
+        }
+    }
+}
+
 pub struct Playback {
     _stream: cpal::Stream,
-    volume: Arc<Mutex<f32>>
+    volume: Arc<AtomicU32>,
 }
 
 impl Playback {
-    /// Creates a new Playback instance and starts the audio stream.
     pub fn new(config: PlaybackConfig) -> Result<Self, PlaybackError> {
-        let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or(PlaybackError::NoOutputDevice)?;
+        let (device, stream_config, sample_format) = setup_device(&config)?;
 
-        println!("Using output device: {}", device.name()?);
+        let (mut prod, cons): (ProdType, ConsType) = setup_ringbuffer();
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
 
-        let desired_sample_rate = cpal::SampleRate(config.sample_rate);
-        let mut supported_configs: Vec<_> = device.supported_output_configs()?.collect();
-
-        supported_configs.sort_by(|a, b| b.max_sample_rate().cmp(&a.max_sample_rate()));
-
-        let supported_config_range = supported_configs
-            .iter()
-            .find(|c| {
-                c.channels() == config.channels
-                    && c.min_sample_rate() <= desired_sample_rate
-                    && c.max_sample_rate() >= desired_sample_rate
-            })
-            .or_else(|| {
-                supported_configs.iter().find(|c| {
-                    c.channels() == 2
-                        && c.min_sample_rate() <= desired_sample_rate
-                        && c.max_sample_rate() >= desired_sample_rate
-                })
-            })
-            .or_else(|| {
-                supported_configs.iter().find(|c| {
-                    c.channels() == 1
-                        && c.min_sample_rate() <= desired_sample_rate
-                        && c.max_sample_rate() >= desired_sample_rate
-                })
-            })
-            // No config supports our rate take best we can get
-            .or_else(|| {
-                supported_configs
-                    .iter()
-                    .find(|c| c.channels() == config.channels)
-                    .or_else(|| supported_configs.iter().find(|c| c.channels() == 2))
-                    .or_else(|| supported_configs.iter().find(|c| c.channels() == 1))
-            })
-            // Just to be max robust: If we still did not find anything take whatever we can get
-            .or_else(|| supported_configs.iter().next())
-            .ok_or(PlaybackError::NoSupportedConfig)?;
-
-        let sample_rate_to_use = if supported_config_range.min_sample_rate() <= desired_sample_rate
-            && supported_config_range.max_sample_rate() >= desired_sample_rate
-        {
-            desired_sample_rate
-        } else {
-            supported_config_range.max_sample_rate()
-        };
-
-        let stream_config = supported_config_range
-            .with_sample_rate(sample_rate_to_use)
-            .config();
-
-        println!("Using input config {:?}", stream_config);
-
-        let opus_channels = match config.channels {
-            1 => opus::Channels::Mono,
-            2 => opus::Channels::Stereo,
-            _ => panic!("Invalid amount of channels"),
-        };
-
-        let mut resampler = if stream_config.sample_rate.0 != config.sample_rate {
-            println!(
-                "Input sample rate ({}) does not match desired one {}. Using Resampler.",
-                stream_config.sample_rate.0, config.sample_rate
-            );
-
-            let resampler = rubato::FftFixedInOut::<f32>::new(
-                config.sample_rate as usize,
-                stream_config.sample_rate.0 as usize,
-                1024,
-                config.channels as usize,
-            )?;
-            Some(Box::new(resampler))
-        } else {
-            None
-        };
-
-        let mut decoder = Decoder::new(config.sample_rate, opus_channels)?;
-
-        let ringbuffer = HeapRb::<f32>::new(9600);
-        let (mut producer, mut consumer) = ringbuffer.split();
+        let stream =
+            setup_output_stream(sample_format, device, &stream_config, cons, volume.clone())?;
 
         let track = config.track;
-        let input_channels = config.channels;
-        let output_channels = stream_config.channels;
+        let mut decoder = Decoder::new(48000, opus::Channels::Mono)?;
+        let mut decoder_buffer = vec![0.0f32; 5760];
 
+        let mut resample_staging_buffer = Vec::<f32>::new();
+
+        let (mut resampler, mut resample_in_buf, mut resample_out_buf) =
+            if stream_config.sample_rate.0 != 48000 {
+                let resampler = rubato::FftFixedInOut::<f32>::new(
+                    48000,
+                    stream_config.sample_rate.0 as usize,
+                    1024,
+                    1,
+                )?;
+                let in_buf = resampler.input_buffer_allocate(true);
+                let out_buf = resampler.output_buffer_allocate(true);
+
+                (Some(resampler), in_buf, out_buf)
+            } else {
+                (None, Vec::new(), Vec::new())
+            };
+
+        // tokio buffer to receive packages over the internet
         config.tokio_handle.spawn(async move {
-            let mut opus_buffer = [0f32; 11520]; // 48000 Sample rate * 2 Channels * 0.120 ms (opus max)
-            let mut last_seq:Option<u16> = None;
-            loop {
-                match track.read_rtp().await {
-                    Ok((packet, _)) => {
-                        let seq = packet.header.sequence_number;
+            while let Ok((packet, _)) = track.read_rtp().await {
+                let payload = packet.payload;
 
-                        if let Some(prev_seq) = last_seq {
-                            let expected_seq = prev_seq.wrapping_add(1);
-                            if seq != expected_seq {
-                                let lost = seq.wrapping_sub(prev_seq).saturating_sub(1);
-                                println!("Playback: Packet loss detected. From seq {} to {}. Lost ~{} packets.", prev_seq, seq, lost);
-                            }
-                        }
-                        last_seq = Some(seq);
-
-                        let compressed = packet.payload;
-
-                        match decoder.decode_float(&compressed, &mut opus_buffer, false) {
-                            Ok(num_decoded_samples_per_channel) => {
-                                // let total_samples =
-                                //     num_decoded_samples_per_channel * config.channels as usize;
-                                // producer.push_slice(&opus_buffer[..total_samples]);
-
-                                let decoded_samples = &opus_buffer
-                                    [..num_decoded_samples_per_channel * input_channels as usize];
-
-                                let mut processed_data = Cow::from(decoded_samples);
-
-                                if let Some(resampler) = &mut resampler {
-                                    let channels = input_channels as usize;
-                                    let num_frames = decoded_samples.len() / channels;
-                                    let mut deinterleaved = vec![vec![0.0; num_frames]; channels];
-
-                                    for i in 0..num_frames {
-                                        for j in 0..channels {
-                                            deinterleaved[j][i] = decoded_samples[i * channels + j];
-                                        }
-                                    }
-
-                                    match resampler.process(&deinterleaved, None) {
-                                        Ok(resampled_deinterleaved) => {
-                                            let resampled_channels = resampled_deinterleaved.len();
-                                            let resampled_frames = if resampled_channels > 0 {
-                                                resampled_deinterleaved[0].len()
-                                            } else {
-                                                0
-                                            };
-
-                                            let mut interleaved =
-                                                vec![0.0; resampled_frames * resampled_channels];
-
-                                            for i in 0..resampled_frames {
-                                                for j in 0..resampled_channels {
-                                                    interleaved[i * resampled_channels + j] =
-                                                        resampled_deinterleaved[j][i];
-                                                }
-                                            }
-                                            processed_data = std::borrow::Cow::from(interleaved);
-                                        }
-
-                                        Err(e) => {
-                                            eprintln!("Resampling error: {}", e);
-                                            return;
-                                        }
-                                    }
-                                }
-
-                                if input_channels != output_channels {
-                                    let mut converted = Vec::new();
-                                    if input_channels == 2 && output_channels == 1 {
-                                        for frame in processed_data.chunks_exact(2) {
-                                            converted.push((frame[0] + frame[1]) / 2.0);
-                                        }
-                                        processed_data = std::borrow::Cow::from(converted);
-                                    } else if input_channels == 1 && output_channels == 2 {
-                                        for sample in processed_data.iter() {
-                                            converted.push(*sample);
-                                            converted.push(*sample);
-                                        }
-                                        processed_data = std::borrow::Cow::from(converted);
-                                    }
-                                }
-
-                                producer.push_slice(&processed_data);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to decode opus packet: {}", e);
-                            }
+                match decoder.decode_float(&payload, &mut decoder_buffer, false) {
+                    Ok(count) => {
+                        for i in 0..count {
+                            resample_staging_buffer.push(decoder_buffer[i]);
                         }
                     }
-                    Err(e) => {
-                        println!("RTP track read finished: {}", e);
-                        break;
+                    Err(_) => {
+                        eprintln!("Failed to decode")
                     }
+                }
+
+                if let Some(ref mut resampler) = resampler {
+                    while resample_staging_buffer.len() >= resampler.input_frames_next() {
+                        let frames_needed = resampler.input_frames_next();
+
+                        resample_in_buf[0]
+                            .copy_from_slice(&resample_staging_buffer[..frames_needed]);
+                        resample_staging_buffer.drain(..frames_needed);
+
+                        match resampler.process_into_buffer(
+                            &resample_in_buf,
+                            &mut resample_out_buf,
+                            None,
+                        ) {
+                            Ok((_, len)) => {
+                                for &sample in &resample_out_buf[0][..len] {
+                                    for _ in 0..stream_config.channels {
+                                        let _ = prod.try_push(sample);
+                                    }
+                                }
+                            }
+                            Err(e) => eprintln!("resample error: {}", e),
+                        }
+                    }
+                } else {
+                    for &sample in resample_staging_buffer.iter() {
+                        for _ in 0..stream_config.channels {
+                            let _ = prod.try_push(sample);
+                        }
+                    }
+                    resample_staging_buffer.clear();
                 }
             }
         });
 
-        let volume = Arc::new(Mutex::new(1.0f32));
-        let callback_volume = volume.clone();
+        stream.play().map_err(|_| {
+            PlaybackError::BuildStreamError(cpal::BuildStreamError::DeviceNotAvailable)
+        })?;
 
-        let output_callback = move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            let mut underruns = 0;
-            let vol = *callback_volume.lock().unwrap();
+        Ok(Self {
+            _stream: stream,
+            volume,
+        })
+    }
 
+    pub fn get_volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    pub fn set_volume(&mut self, value: f32) {
+        // println!("Changed volume to: {}", value);
+        self.volume.store(value.to_bits(), Ordering::Release);
+    }
+}
+
+fn setup_output_stream(
+    sample_format: SampleFormat,
+    device: Device,
+    stream_config: &StreamConfig,
+    mut consumer: ConsType,
+    volume: Arc<AtomicU32>,
+) -> Result<cpal::Stream, PlaybackError> {
+    let mut metrics = JitterMetrics::new(stream_config.sample_rate.0, stream_config.channels);
+    let mut is_buffering = true;
+    let mut decay_counter = 0;
+
+    let mut process_audio = move |data: &mut [f32]| {
+        let occupied = consumer.occupied_len();
+
+        if is_buffering {
+            if occupied >= metrics.target_samples {
+                is_buffering = false;
+            } else {
+                data.fill(0.0);
+                return;
+            }
+        }
+
+        let read = consumer.pop_slice(data);
+
+        let vol = f32::from_bits(volume.load(Ordering::Relaxed));
+        if (vol - 1.0).abs() > f32::EPSILON {
             for sample in data.iter_mut() {
-                *sample = match consumer.try_pop() {
-                    Some(s) => s * vol,
-                    None => {
-                        underruns += 1;
-                        0.0
-                    }
-                }
+                *sample *= vol;
             }
+        }
 
-            if underruns > 0 {
-                println!(
-                    "Playback Audio Buffer underrun. Played {} slices of silence",
-                    underruns
-                );
+        if read < data.len() {
+            // Underrun
+            data[read..].fill(0.0);
+            metrics.record_underrun();
+            is_buffering = true;
+        } else {
+            // stability decay
+            // every 500 cycles (about 5-10secs) I try to reduce the buffer size
+            // I just randomly chose that value xD
+            decay_counter += 1;
+            if decay_counter > 250 {
+                metrics.decay_target();
+                decay_counter = 0;
             }
-        };
+        }
+    };
 
-        let error_callback = |err| {
-            eprintln!("An error occured in the output stream: {}", err);
-        };
+    let error_callback = move |e| {
+        eprintln!("Output stream error: {}", e);
+    };
 
-        let stream =
-            device.build_output_stream(&stream_config, output_callback, error_callback, None)?;
-        stream.play().unwrap();
+    let stream = match sample_format {
+        SampleFormat::F32 => device.build_output_stream(
+            stream_config,
+            move |data: &mut [f32], _| process_audio(data),
+            error_callback,
+            None,
+        ),
+        _ => {
+            eprintln!("Output not implemented: {}", sample_format);
+            return Err(PlaybackError::UnsupportedFormat(sample_format));
+        }
+    }?;
+    Ok(stream)
+}
 
-        Ok(Self { _stream: stream, volume })
-    }
+fn setup_ringbuffer() -> (
+    ringbuf::wrap::caching::Caching<
+        Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
+        true,
+        false,
+    >,
+    ringbuf::wrap::caching::Caching<
+        Arc<ringbuf::SharedRb<ringbuf::storage::Heap<f32>>>,
+        false,
+        true,
+    >,
+) {
+    let ring_buffer = HeapRb::<f32>::new(48000);
+    ring_buffer.split()
+}
 
-    pub fn set_volume(&mut self, new_volume: f32) {
-        if let Ok(mut volume) = self.volume.lock() {
-            *volume = new_volume;
-        } 
-    }
+fn setup_device(
+    config: &PlaybackConfig,
+) -> Result<(Device, StreamConfig, SampleFormat), PlaybackError> {
+    let host = cpal::default_host();
+    let device = host
+        .default_output_device()
+        .ok_or(PlaybackError::NoOutputDevice)?;
+
+    println!("Using output device: {}", device.name()?);
+
+    let configs: Vec<_> = device.supported_output_configs()?.collect();
+    let target_rate = cpal::SampleRate(config.sample_rate);
+    let target_fmt = cpal::SampleFormat::F32;
+
+    let supports_48k = |c: &SupportedStreamConfigRange| {
+        (c.min_sample_rate()..=c.max_sample_rate()).contains(&target_rate)
+    };
+
+    let best_config = configs
+        .iter()
+        // `F32, Mono, 48k
+        .find(|c| c.sample_format() == target_fmt && c.channels() == 1 && supports_48k(c))
+        // F32, Stereo, 48k
+        .or_else(|| {
+            configs
+                .iter()
+                .find(|c| c.sample_format() == target_fmt && c.channels() == 2 && supports_48k(c))
+        })
+        // F32, any, 48k
+        .or_else(|| {
+            configs
+                .iter()
+                .find(|c| c.sample_format() == target_fmt && supports_48k(c))
+        })
+        // F32, Mono, any
+        .or_else(|| {
+            configs
+                .iter()
+                .find(|c| c.sample_format() == target_fmt && c.channels() == 1)
+        })
+        // F32, any, any
+        .or_else(|| configs.iter().find(|c| c.sample_format() == target_fmt))
+        .or_else(|| configs.first())
+        .ok_or(PlaybackError::NoSupportedConfig)?;
+
+    let final_rate =
+        target_rate.clamp(best_config.min_sample_rate(), best_config.max_sample_rate());
+    let final_config = best_config.with_sample_rate(final_rate);
+
+    Ok((device, final_config.config(), final_config.sample_format()))
 }

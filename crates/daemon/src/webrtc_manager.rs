@@ -139,13 +139,11 @@ impl WebRtcManager {
                         "Failed to connect to signaling server: {}. Retrying in 5s...",
                         e
                     );
-                    dbg!(&address);
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
             }
         }
 
-        dbg!("Run terminated");
         Ok(())
     }
 
@@ -398,7 +396,7 @@ impl WebRtcManager {
             }
             Command::SetOutputVolume(volume) => {
                 println!("Setting output volume to: {}", volume);
-
+                
                 for playback in self.playbacks.lock().await.iter_mut() {
                     playback.set_volume(volume);
                 }
