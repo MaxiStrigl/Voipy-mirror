@@ -18,6 +18,7 @@ use rubato::ResampleError;
 use rubato::Resampler;
 use rubato::ResamplerConstructionError;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::time::Duration;
@@ -67,25 +68,9 @@ pub struct CaptureConfig {
     pub channels: u16,
 }
 
-struct SharedVolume(AtomicU32);
-
-impl SharedVolume {
-    fn new(val: f32) -> Self {
-        Self(AtomicU32::new(val.to_bits()))
-    }
-
-    fn get(&self) -> f32 {
-        f32::from_bits(self.0.load(Relaxed))
-    }
-
-    fn set(&self, val: f32) {
-        self.0.store(val.to_bits(), Relaxed);
-    }
-}
-
 pub struct Capture {
     _stream: cpal::Stream,
-    volume_handle: Arc<SharedVolume>,
+    volume: Arc<AtomicU32>,
     worker_thread: Option<std::thread::JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
 }
@@ -99,7 +84,8 @@ impl Capture {
         };
 
         let (prod, mut cons) = setup_ringbuffer(&stream_config);
-        let volume_handle = Arc::new(SharedVolume::new(1.0));
+        let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let volume_clone = volume.clone();
         let stream = setup_input_stream(sample_format, device, &stream_config, prod)?;
 
         let shutdown_signal = Arc::new(AtomicBool::new(false));
@@ -125,7 +111,7 @@ impl Capture {
                 };
 
             let mut processor =
-                AudioProcessor::new(stream_config.sample_rate.0, stream_config.channels)
+                AudioProcessor::new(stream_config.sample_rate.0, stream_config.channels, volume_clone)
                     .expect("Failed to create processor");
 
             let mut read_buffer = vec![0.0f32; frame_size];
@@ -174,10 +160,18 @@ impl Capture {
 
         Ok(Self {
             _stream: stream,
-            volume_handle,
+            volume,
             worker_thread: Some(worker_thread),
             shutdown_signal,
         })
+    }
+
+    pub fn get_volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    pub fn set_volume(&mut self, value: f32) {
+        self.volume.store(value.to_bits(), Ordering::Release);    
     }
 }
 
@@ -307,10 +301,11 @@ struct AudioProcessor {
     hold_frames: usize,
     output_staging_buffer: Vec<f32>,
     agc: agc::Agc,
+    volume: Arc<AtomicU32>
 }
 
 impl AudioProcessor {
-    fn new(input_sample_rate: u32, input_channels: u16) -> Result<Self, CaptureError> {
+    fn new(input_sample_rate: u32, input_channels: u16, volume: Arc<AtomicU32>) -> Result<Self, CaptureError> {
         let mut encoder = Encoder::new(48000, opus::Channels::Mono, opus::Application::Voip)?;
 
         encoder.set_bitrate(opus::Bitrate::Bits(32000))?;
@@ -355,6 +350,7 @@ impl AudioProcessor {
             resample_out_buffer,
             output_staging_buffer: Vec::with_capacity(4800),
             agc,
+            volume,
         })
     }
 
@@ -421,6 +417,7 @@ impl AudioProcessor {
             let close_threshold = 0.01;
             let release_speed = 0.02;
             let hold_time_samples = (48000.0 as f32 * 0.1) as usize;
+            let volume: f32 = f32::from_bits(self.volume.load(Relaxed));
 
             let mut max_amp = 0.0;
             for sample in chunk.iter_mut() {
@@ -450,7 +447,7 @@ impl AudioProcessor {
             }
 
             for sample in chunk.iter_mut() {
-                *sample = self.post_chain.filter_mono(*sample);
+                *sample = self.post_chain.filter_mono(*sample) * volume;
             }
 
             let output_size = self.encoder.encode_float(chunk, &mut self.opus_out)?;
