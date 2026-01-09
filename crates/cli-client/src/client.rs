@@ -24,55 +24,55 @@ pub async fn handle_command(
     command: Commands,
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
 ) -> Result<()> {
-    match command {
-        Commands::Start { .. } => {
-            let request = tonic::Request::new(StartRequest {});
-            println!("Sending start request...");
-            let response = client.start(request).await;
-            println!("Received answer {:?}", response);
-        }
-        Commands::Stop => {
-            let request = tonic::Request::new(StopRequest {});
-            println!("Sending stop request...");
-            let response = client.stop(request).await;
-            println!("Received answer {:?}", response);
-        }
-        Commands::Status => todo!(),
-        Commands::Daemon { .. } => {}
-        Commands::Volume {
-            action,
-            target,
-            value,
-        } => match action {
-            VolumeAction::Set => {
-                if target == VolumeTarget::Self_ {
-                    if let Some(value) = value {
-                        let request = tonic::Request::new(SetInputVolumeRequest { volume: value });
-                        println!("Sending set volume Request {}", value);
-                        let response = client.set_input_volume(request).await;
-                        println!("Received answer {:?}", response);
-                    } else {
-                        println!("Value is required for 'set' action.");
-                    }
-                } else {
-                    if let Some(value) = value {
-                        let request = tonic::Request::new(SetOutputVolumeRequest { volume: value });
-                        println!("Sending set volume Request {}", value);
-                        let response = client.set_output_volume(request).await;
-                        println!("Received answer {:?}", response);
-                    } else {
-                        println!("Value is required for 'set' action.");
-                    }
-                }
-            }
-            VolumeAction::Get => {
-                println!("Get volume not yet implemented.");
-            }
-            VolumeAction::Mute => {
-                println!("Mute volume not yet implemented.");
-            }
-        },
-    }
+    // match command {
+    //     Commands::Start { .. } => {
+    //         let request = tonic::Request::new(StartRequest {});
+    //         println!("Sending start request...");
+    //         let response = client.start(request).await;
+    //         println!("Received answer {:?}", response);
+    //     }
+    //     Commands::Stop => {
+    //         let request = tonic::Request::new(StopRequest {});
+    //         println!("Sending stop request...");
+    //         let response = client.stop(request).await;
+    //         println!("Received answer {:?}", response);
+    //     }
+    //     Commands::Status => todo!(),
+    //     Commands::Daemon { .. } => {}
+    //     Commands::Volume {
+    //         action,
+    //         target,
+    //         value,
+    //     } => match action {
+    //         VolumeAction::Set => {
+    //             if target == VolumeTarget::Self_ {
+    //                 if let Some(value) = value {
+    //                     let request = tonic::Request::new(SetInputVolumeRequest { volume: value });
+    //                     println!("Sending set volume Request {}", value);
+    //                     let response = client.set_input_volume(request).await;
+    //                     println!("Received answer {:?}", response);
+    //                 } else {
+    //                     println!("Value is required for 'set' action.");
+    //                 }
+    //             } else {
+    //                 if let Some(value) = value {
+    //                     let request = tonic::Request::new(SetOutputVolumeRequest { volume: value });
+    //                     println!("Sending set volume Request {}", value);
+    //                     let response = client.set_output_volume(request).await;
+    //                     println!("Received answer {:?}", response);
+    //                 } else {
+    //                     println!("Value is required for 'set' action.");
+    //                 }
+    //             }
+    //         }
+    //         VolumeAction::Get => {
+    //             println!("Get volume not yet implemented.");
+    //         }
+    //         VolumeAction::Mute => {
+    //             println!("Mute volume not yet implemented.");
+    //         }
+    //     },
+    // }
 
     Ok(())
 }
