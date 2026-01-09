@@ -3,19 +3,42 @@ syntax = "proto3";
 package voicechat;
 
 service VoicechatDaemon {
-  
+  // --- Connection Management ---
+  // Tells the daemon to connect to the signaling server
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  // Tells the daemon to disconnect from the signaling server
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+
+  // --- Call Management ---
+  //  Starts a call (Voice session). Currently with the second client connected to the server
   rpc Start(StartRequest) returns (StartResponse);
   rpc Stop(StopRequest) returns (StopResponse);
 
+  // --- Daemon Controls ---
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse); 
+
+  // --- Configurations ---
+  // Applies the full config
+  rpc Configure(ConfigureRequest) returns (ConfiugreResponse);
+
+  // Status & Monitoring
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
-  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  rpc SubscribeStatus(SubscribeStatusRequest) returns (stream StatusUpdate);
 
-  rpc GetInputVolume(GetInputVolumeRequest) returns (GetInputVolumeResponse);
+  // --- Volume Shortcuts ---
   rpc SetInputVolume(SetInputVolumeRequest) returns (SetInputVolumeResponse);
-
   rpc SetOutputVolume(SetOutputVolumeRequest) returns (SetOutputVolumeResponse);
-  rpc GetOutputVolume(GetOutputVolumeRequest) returns (GetOutputVolumeResponse);
 }
+
+// --- Connection & Call Messages ---
+message ConnectRequest {}
+message ConnectResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message DisconnectRequest {}
+message DisconnectResponse {}
 
 message StartRequest {}
 message StartResponse {}
@@ -23,41 +46,80 @@ message StartResponse {}
 message StopRequest {}
 message StopResponse {}
 
-message GetStatusRequest {}
-message GetStatusResponse{
-  enum Status {
-    Stopped = 0;
-    Connecting = 1;
-    Connected = 2;
-    Error = 3;
-  }
-  Status status = 1;
+// --- Configuration Messages ---
+message ConfigureRequest {
+  UserConifg user = 1;
+  ConnectionConfig connection = 2;
+  AudioConfig audio = 3;
+}
+
+message Configure Response {
+  bool success = 1;
   string error_message = 2;
 }
 
+message UserConfig {
+  string name = 1;
+}
+
+message ConnectionConfig {
+  string server_ip = 1;
+  uint32 signaling_port = 2;
+  repeated string stun_servers = 3;
+  uint64 ice_timeout_seconds = 4;
+}
+
+message AudioConfig {
+  float input_volume = 1;
+  float output_volume = 2;
+  optional string input_device = 3;
+  optional string output_device = 4;
+  uint32 input_latency_ms = 5;
+  uint32 ouput_jutter_buffer_ms = 6;
+  ProcessingConfig processing = 7;
+}
+
+message ProcessingConfig {
+  float vad_threshold = 1;
+  bool noise_supression = 2;
+  bool automatic_gain_control = 3;
+  float agc_tartet_level = 4;
+  float agc_max_gain = 5;
+  float high_pass_filter_hz = 6;
+  float low_pass_filter_hz = 7;
+}
+
+// --- Status & Misc Messages ---
 message ShutdownRequest {}
 message ShutdownResponse {}
 
-message GetInputVolumeRequest {}
-message GetInputVolumeResponse {
-  float volume = 1;
+message GetStatusRequest {}
+message GetStatusResponse {
+  enum Status {
+    Idle = 0;
+    Connecting = 1;
+    Online = 2;
+    InCall = 3;
+    Error = 4;
+  }
+  Status status = 1;
+  string error_message = 2;
+  string connected_peer = 3;
+  float packaet_loss_percent = 4;
+  float ping_ms = 5;
 }
 
-
-message SetInputVolumeRequest {
-  float volume = 1;
+message SubscribeStatusRequest {}
+message StatusUpdate {
+  GetStatusResponse.Status state = 1;
+  string error_message = 2;
+  string connected_peer = 3;
+  float packaet_loss_percent = 4;
+  float ping_ms = 5;
 }
+
+message SetInputVolumeRequest { float volume = 1;}
 message SetInputVolumeResponse {}
 
-
-message SetOutputVolumeRequest {
-  float volume = 1;
-}
+message SetOutputVolumeRequest { float volume = 1;}
 message SetOutputVolumeResponse {}
-
-
-message GetOutputVolumeRequest {
-}
-message GetOutputVolumeResponse {
-  float volume = 1;
-}
