@@ -165,4 +165,17 @@ impl Config {
         }
         Ok(Config::default())
     }
+
+    pub fn save(&self) -> Result<()> {
+        let config_path = directories::BaseDirs::new().map(
+            |d| d.config_dir().join("voipyc").join("config.toml"));
+
+        if let Some(path) = config_path {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(path, toml::to_string_pretty(self)?)?;
+        }
+        Ok(())
+    }
 }
