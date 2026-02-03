@@ -3,35 +3,84 @@ syntax = "proto3";
 package voicechat;
 
 service VoicechatDaemon {
-  // --- Connection Management ---
-  // Tells the daemon to connect to the signaling server
-  rpc Connect(ConnectRequest) returns (ConnectResponse);
-  // Tells the daemon to disconnect from the signaling server
-  rpc Connect(ConnectRequest) returns (ConnectResponse);
+  // ==========================================================================
+  // Connection Management
+  // ==========================================================================
 
-  // --- Call Management ---
-  //  Starts a call (Voice session). Currently with the second client connected to the server
-  rpc Start(StartRequest) returns (StartResponse);
-  rpc Stop(StopRequest) returns (StopResponse);
+  // Establish a connection to the signaling server 
+  rpc ConnectToServer(ConnectRequest) returns (ConnectResponse);
 
-  // --- Daemon Controls ---
-  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse); 
+  // Disconnects from the signaling server
+  rpc DisconnectFromServer(DisconnectRequest) returns (DisconnectResponse);
 
-  // --- Configurations ---
-  // Applies the full config
-  rpc Configure(ConfigureRequest) returns (ConfiugreResponse);
+  // ==========================================================================
+  // Call Management
+  // ==========================================================================
 
-  // Status & Monitoring
+  // Initiates a voice call with the connected peer
+  rpc Call(CallRequest) returns (CallResponse);
+
+  // Ends the current call
+  rpc Hangup(HangupRequest) returns (HangupResponse);
+
+  // ==========================================================================
+  // Audio Control (Runtime)
+  // ==========================================================================
+
+  // Mutes or unmutes the microphone
+  rpc SetMute(MuteRequest) returns (MuteResponse);
+
+  // Deafens (mutes output) or undeafens the daemon
+  rpc SetDeafen(DeafenRequest) returns (DeafenResponse);
+
+  // Sets the input (microphone) volume gain.
+  rpc SetInputVolume(SetInputVolumeRequest) returns (SetInputVolumeResponse);
+
+  // Sets the output (speaker) volume gain.
+  rpc SetOutputVolume(SetOutputVolumeRequest) returns (SetOutputVolumeResponse);
+
+  // ==========================================================================
+  // Configuration
+  // ==========================================================================
+
+  // Applies the full configuration upgrade to the daemon
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+
+  // Retrieves the current configuration
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+
+  // Lists available audio input devices
+  rpc ListInputDevices(ListDevicesRequest) returns (ListDevicesResponse);
+
+  // Lists available audio output devices
+  rpc ListOutputDevices(ListDevicesRequest) returns (ListDevicesResponse);
+
+  // ==========================================================================
+  //  Status & Monitoring
+  // ==========================================================================
+
+  // Gets  the current status of the daemon (connection, call state)
   rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // Subscribe to server updates (server events, errors, changes)
   rpc SubscribeStatus(SubscribeStatusRequest) returns (stream StatusUpdate);
 
-  // --- Volume Shortcuts ---
-  rpc SetInputVolume(SetInputVolumeRequest) returns (SetInputVolumeResponse);
-  rpc SetOutputVolume(SetOutputVolumeRequest) returns (SetOutputVolumeResponse);
+  // Subscribe to real-time audio level updates (for UI-visualization)
+  rpc SubscribeAudioLevles(SubscribeAudioLevelsRequest) returns (stream AudioLevelsUpdate);
+
+
+  // ==========================================================================
+  //  System
+  // ==========================================================================
+
+  // Gracefully shuts down the daemon
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse); 
 }
 
 // --- Connection & Call Messages ---
-message ConnectRequest {}
+message ConnectRequest {
+  string address = 1;
+}
 message ConnectResponse {
   bool success = 1;
   string error_message = 2;
@@ -40,20 +89,36 @@ message ConnectResponse {
 message DisconnectRequest {}
 message DisconnectResponse {}
 
-message StartRequest {}
-message StartResponse {}
+message CallRequest {}
+message CallResponse {
+  bool success = 1;
+  string error_message = 2;
+}
 
-message StopRequest {}
-message StopResponse {}
+message HangupRequest {}
+message HangupResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+message MuteRequest {
+  bool active = 1;
+}
+message MuteResponse {}
+
+message DeafenRequest {
+  bool active = 1;
+}
+message DeafenResponse {}
 
 // --- Configuration Messages ---
 message ConfigureRequest {
-  UserConifg user = 1;
+  UserConfig user = 1;
   ConnectionConfig connection = 2;
   AudioConfig audio = 3;
 }
 
-message Configure Response {
+message ConfigureResponse {
   bool success = 1;
   string error_message = 2;
 }
@@ -89,6 +154,16 @@ message ProcessingConfig {
   float low_pass_filter_hz = 7;
 }
 
+message ListDevicesRequest {}
+message ListDevicesResponse {
+  message DeviceInfo {
+    uint32 index = 1;
+    string name = 2;
+    // TODO: Maybe add here capabilities (max channels, sample rates) 
+  }
+  repeated DeviceInfo devices = 1;
+}
+
 // --- Status & Misc Messages ---
 message ShutdownRequest {}
 message ShutdownResponse {}
@@ -116,6 +191,13 @@ message StatusUpdate {
   string connected_peer = 3;
   float packaet_loss_percent = 4;
   float ping_ms = 5;
+}
+
+message SubscribeAudioLevelsRequest {} 
+message AudioLevelsUpdate {
+  float input_level = 1;
+  float output_level = 2;
+  bool is_speaking = 3;
 }
 
 message SetInputVolumeRequest { float volume = 1;}
