@@ -1,7 +1,9 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
+#[command(name = "voipyc")]
 #[command(version, about, infer_subcommands = true)]
+// #[command(arg_required_else_help = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -13,9 +15,9 @@ pub struct Cli {
 #[derive(Args, Debug)]
 pub struct ConfigArgs {
     // --- Meta ---
-    /// Save these configuration changes to the config file
+    /// Don't save these configuration changes to the config file
     #[arg(long, global = true)]
-    pub save: Option<bool>, 
+    pub dont_save: Option<bool>, 
     
     /// Use the provided config file 
     #[arg(long, global = true)]
@@ -104,7 +106,7 @@ pub struct ConfigArgs {
     pub low_pass_filter_hz: Option<f32>
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone, Debug, PartialEq)]
 pub enum Commands {
     /// Start a call with the other person connected to the server
     Call,
@@ -121,5 +123,11 @@ pub enum Commands {
     Tui,
 
     /// Shutdown the daemon
-    Shutdown
+    Shutdown,
+
+    /// Connect to a server 
+    Connect, 
+
+    /// Disconnect from a server
+    Disconnect
 }

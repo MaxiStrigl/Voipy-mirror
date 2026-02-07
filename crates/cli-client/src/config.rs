@@ -1,11 +1,11 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{fs, path::PathBuf};
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    pub user: Option<User>,
+    pub user: User,
     pub connection: Connection,
     pub audio: Audio,
 }
@@ -13,7 +13,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            user: None,
+            user: User::default(),
             connection: Connection::default(),
             audio: Audio::default(),
         }
@@ -75,10 +75,10 @@ pub struct Audio {
     pub output_volume: f32,
 
     /// Specific name of the microphone to use (e.g. todo!)
-    pub input_device: Option<String>,
+    pub input_device: String,
 
     /// Specific name of the speakers to use (e.g. todo!)
-    pub output_device: Option<String>,
+    pub output_device: String,
 
     /// Input ringbuffer latency in milliseconds
     /// Higher = safer against dropouts, Lower = less latency
@@ -87,7 +87,7 @@ pub struct Audio {
     /// Jitter buffer latency in milliseconds for playback.
     ///  Controls how much audio get's buffered before playing to smooth out
     ///  network packet loss
-    pub output_jitter_buffer: u32,
+    pub output_jitter_buffer_ms: u32,
 
     pub processing: Processing,
 }
@@ -97,10 +97,10 @@ impl Default for Audio {
         Self {
             input_volume: 1.0,
             output_volume: 1.0,
-            input_device: None,
-            output_device: None,
+            input_device: "default".to_owned(),
+            output_device: "default".to_owned(),
             input_latency_ms: 200,
-            output_jitter_buffer: 60,
+            output_jitter_buffer_ms: 60,
             processing: Processing::default(),
         }
     }
@@ -117,8 +117,10 @@ pub struct Processing {
 
     /// Enable/Disable Automatic Gain Control
     pub automatic_gain_control: bool,
+
     /// AGC Target Level
     pub agc_target_level: f32,
+
     /// AGC Max Gain
     pub agc_max_gain: f32,
 
@@ -145,9 +147,8 @@ impl Default for Processing {
 }
 
 impl Config {
-    pub fn load() -> Result<Self> {
-        let config_path =
-            directories::BaseDirs::new().map(|d| d.config_dir().join("voipyc").join("config.toml"));
+    pub fn load(path: Option<String>) -> Result<Self> {
+        let config_path = Self::get_config_path(path);
 
         if let Some(path) = config_path {
             if path.exists() {
@@ -166,9 +167,8 @@ impl Config {
         Ok(Config::default())
     }
 
-    pub fn save(&self) -> Result<()> {
-        let config_path = directories::BaseDirs::new().map(
-            |d| d.config_dir().join("voipyc").join("config.toml"));
+    pub fn save(&self, path: Option<String>) -> Result<()> {
+        let config_path = Self::get_config_path(path);
 
         if let Some(path) = config_path {
             if let Some(parent) = path.parent() {
@@ -177,5 +177,11 @@ impl Config {
             fs::write(path, toml::to_string_pretty(self)?)?;
         }
         Ok(())
+    }
+
+    fn get_config_path(path: Option<String>) -> Option<PathBuf> {
+        path.map(PathBuf::from).or_else(|| {
+            directories::BaseDirs::new().map(|d| d.config_dir().join("voipyc").join("config.toml"))
+        })
     }
 }

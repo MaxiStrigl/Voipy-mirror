@@ -1,18 +1,10 @@
-use crate::cli::*;
-use std::{
-    env,
-    process::Stdio,
-    time::Duration,
-};
-
+use std::{env, process::Stdio, time::Duration};
 use anyhow::Result;
 use daemon_protocol::voicechat::{
-    SetInputVolumeRequest, SetOutputVolumeRequest, StartRequest, StopRequest,
-    voicechat_daemon_client::VoicechatDaemonClient,
+    CallRequest, ConnectRequest, DisconnectRequest, HangupRequest, voicechat_daemon_client::VoicechatDaemonClient
 };
 
 use std::process::Command as StdCommand;
-
 
 pub async fn is_daemon_running() -> bool {
     VoicechatDaemonClient::connect("http://[::1]:40001")
@@ -20,67 +12,89 @@ pub async fn is_daemon_running() -> bool {
         .is_ok()
 }
 
-pub async fn handle_command(
-    command: Commands,
+pub async fn start_call(
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
-) -> Result<()> {
-    // match command {
-    //     Commands::Start { .. } => {
-    //         let request = tonic::Request::new(StartRequest {});
-    //         println!("Sending start request...");
-    //         let response = client.start(request).await;
-    //         println!("Received answer {:?}", response);
-    //     }
-    //     Commands::Stop => {
-    //         let request = tonic::Request::new(StopRequest {});
-    //         println!("Sending stop request...");
-    //         let response = client.stop(request).await;
-    //         println!("Received answer {:?}", response);
-    //     }
-    //     Commands::Status => todo!(),
-    //     Commands::Daemon { .. } => {}
-    //     Commands::Volume {
-    //         action,
-    //         target,
-    //         value,
-    //     } => match action {
-    //         VolumeAction::Set => {
-    //             if target == VolumeTarget::Self_ {
-    //                 if let Some(value) = value {
-    //                     let request = tonic::Request::new(SetInputVolumeRequest { volume: value });
-    //                     println!("Sending set volume Request {}", value);
-    //                     let response = client.set_input_volume(request).await;
-    //                     println!("Received answer {:?}", response);
-    //                 } else {
-    //                     println!("Value is required for 'set' action.");
-    //                 }
-    //             } else {
-    //                 if let Some(value) = value {
-    //                     let request = tonic::Request::new(SetOutputVolumeRequest { volume: value });
-    //                     println!("Sending set volume Request {}", value);
-    //                     let response = client.set_output_volume(request).await;
-    //                     println!("Received answer {:?}", response);
-    //                 } else {
-    //                     println!("Value is required for 'set' action.");
-    //                 }
-    //             }
-    //         }
-    //         VolumeAction::Get => {
-    //             println!("Get volume not yet implemented.");
-    //         }
-    //         VolumeAction::Mute => {
-    //             println!("Mute volume not yet implemented.");
-    //         }
-    //     },
-    // }
+) -> Result<(), String> {
+    let request = tonic::Request::new(CallRequest {});
+    println!("Sending start request...");
 
-    Ok(())
+    match client.call(request).await {
+        Ok(response) => {
+            let answer = response.into_inner();
+
+            if answer.success {
+                Ok(())
+            } else {
+                Err(format!("Failed to perform call: {}", answer.error_message))
+            }
+        }
+        Err(status) => Err(status.message().to_string()),
+    }
 }
 
-pub async fn start_daemon(signaling_ip: &str) -> Result<()> {
+pub async fn hangup(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+) -> Result<(), String> {
+    let request = tonic::Request::new(HangupRequest {});
+    println!("Sending hangup request...");
+
+    match client.hangup(request).await {
+        Ok(response) => {
+            let answer = response.into_inner();
+
+            if answer.success {
+                Ok(())
+            } else {
+                Err(format!("Failed to hangup call: {}", answer.error_message))
+            }
+        }
+        Err(status) => Err(status.message().to_string()),
+    }
+}
+
+pub async fn connect(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    address: String,
+) -> Result<(), String> {
+    println!("Connecting to {}", &address);
+    let request = tonic::Request::new(ConnectRequest { address });
+
+    match client.connect_to_server(request).await {
+        Ok(response) => {
+            let answer = response.into_inner();
+
+            if answer.success {
+                Ok(())
+            } else {
+                Err("Failed to connect to server".into())
+            }
+        }
+        Err(status) => Err(status.message().to_string()),
+    }
+}
+
+pub async fn disconnect(client: &mut VoicechatDaemonClient<tonic::transport::Channel>) -> Result<(), String>
+{
+    println!("Dsconnecting from server");
+    let request = tonic::Request::new(DisconnectRequest {  });
+
+    match client.disconnect_from_server(request).await {
+        Ok(response) => {
+            let answer = response.into_inner();
+
+            if answer.success {
+                Ok(())
+            } else {
+                Err("Failed to disconnect from server".into())
+            }
+        }
+        Err(status) => Err(status.message().to_string()),
+    }
+}
+
+pub async fn start_daemon() -> Result<()> {
     println!("Attempting to start daemon");
 
-    let args = ["--signaling-ip", signaling_ip];
     let mut daemon_started = false;
 
     let binary_name = format!("voipyd{}", env::consts::EXE_SUFFIX);
@@ -88,7 +102,6 @@ pub async fn start_daemon(signaling_ip: &str) -> Result<()> {
 
     // Try path first
     if StdCommand::new(&binary_name)
-        .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -100,7 +113,6 @@ pub async fn start_daemon(signaling_ip: &str) -> Result<()> {
 
     if !daemon_started {
         if StdCommand::new(&binary_path_cwd)
-            .args(args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -113,14 +125,7 @@ pub async fn start_daemon(signaling_ip: &str) -> Result<()> {
 
     if !daemon_started {
         if StdCommand::new("cargo")
-            .args(&[
-                "run",
-                "--package",
-                "daemon",
-                "--",
-                "--signaling-ip",
-                signaling_ip,
-            ])
+            .args(&["run", "--package", "daemon"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
