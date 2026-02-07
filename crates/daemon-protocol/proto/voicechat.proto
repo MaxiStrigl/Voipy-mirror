@@ -87,7 +87,10 @@ message ConnectResponse {
 }
 
 message DisconnectRequest {}
-message DisconnectResponse {}
+message DisconnectResponse {
+  bool success = 1;
+  string error_message = 2;
+}
 
 message CallRequest {}
 message CallResponse {
@@ -121,6 +124,14 @@ message ConfigureRequest {
 message ConfigureResponse {
   bool success = 1;
   string error_message = 2;
+}
+
+message GetConfigRequest {}
+
+message GetConfigResponse {
+  UserConfig user = 1;
+  ConnectionConfig connection = 2;
+  AudioConfig audio = 3;
 }
 
 message UserConfig {
