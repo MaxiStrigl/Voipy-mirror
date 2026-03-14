@@ -49,7 +49,7 @@ pub struct Connection {
     /// List of STUN servers to navigate NAT/Firewalls
     pub stun_servers: Vec<String>,
 
-    /// Timeout in seconds before giving up on ICE ccandidates
+    /// Timeout in seconds before giving up on ICE candidate
     pub ice_timeout_seconds: u64,
 }
 
@@ -80,12 +80,12 @@ pub struct Audio {
     /// Specific name of the speakers to use (e.g. todo!)
     pub output_device: String,
 
-    /// Input ringbuffer latency in milliseconds
+    /// Input ring-buffer latency in milliseconds
     /// Higher = safer against dropouts, Lower = less latency
     pub input_latency_ms: u32,
 
     /// Jitter buffer latency in milliseconds for playback.
-    ///  Controls how much audio get's buffered before playing to smooth out
+    ///  Controls how much audio gets buffered before playing to smooth out
     ///  network packet loss
     pub output_jitter_buffer_ms: u32,
 
@@ -109,11 +109,11 @@ impl Default for Audio {
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct Processing {
-    /// Voice Activity Detection theshold (0.0 to 1.0)
+    /// Voice Activity Detection threshold (0.0 to 1.0)
     pub vad_threshold: f32,
 
-    /// Enable/Disable Noise Supression
-    pub noise_surpression: bool,
+    /// Enable/Disable Noise Suppression
+    pub noise_suppression: bool,
 
     /// Enable/Disable Automatic Gain Control
     pub automatic_gain_control: bool,
@@ -135,8 +135,7 @@ impl Default for Processing {
     fn default() -> Self {
         Self {
             vad_threshold: 0.4,
-
-            noise_surpression: true,
+            noise_suppression: true,
             automatic_gain_control: true,
             agc_target_level: 0.05,
             agc_max_gain: 6.0,
@@ -167,7 +166,7 @@ impl Config {
         Ok(Config::default())
     }
 
-    pub fn save(&self, path: Option<String>) -> Result<()> {
+    pub fn _save(&self, path: Option<String>) -> Result<()> {
         let config_path = Self::get_config_path(path);
 
         if let Some(path) = config_path {

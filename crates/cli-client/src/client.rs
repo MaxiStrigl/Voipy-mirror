@@ -1,8 +1,9 @@
-use std::{env, process::Stdio, time::Duration};
 use anyhow::Result;
 use daemon_protocol::voicechat::{
-    CallRequest, ConnectRequest, DisconnectRequest, HangupRequest, voicechat_daemon_client::VoicechatDaemonClient
+    CallRequest, ConnectRequest, DisconnectRequest, HangupRequest,
+    voicechat_daemon_client::VoicechatDaemonClient,
 };
+use std::{env, process::Stdio, time::Duration};
 
 use std::process::Command as StdCommand;
 
@@ -55,9 +56,13 @@ pub async fn hangup(
 pub async fn connect(
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
     address: String,
+    port: u16,
 ) -> Result<(), String> {
     println!("Connecting to {}", &address);
-    let request = tonic::Request::new(ConnectRequest { address });
+    let request = tonic::Request::new(ConnectRequest {
+        address,
+        port: port as u32,
+    });
 
     match client.connect_to_server(request).await {
         Ok(response) => {
@@ -73,10 +78,11 @@ pub async fn connect(
     }
 }
 
-pub async fn disconnect(client: &mut VoicechatDaemonClient<tonic::transport::Channel>) -> Result<(), String>
-{
+pub async fn disconnect(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+) -> Result<(), String> {
     println!("Dsconnecting from server");
-    let request = tonic::Request::new(DisconnectRequest {  });
+    let request = tonic::Request::new(DisconnectRequest {});
 
     match client.disconnect_from_server(request).await {
         Ok(response) => {

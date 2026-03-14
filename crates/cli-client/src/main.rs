@@ -48,13 +48,20 @@ async fn main() -> Result<()> {
     let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
 
     let res = match command {
-        Commands::Call=>start_call(&mut client).await,
-        Commands::Hangup=>hangup(&mut client).await,
-        Commands::Status=>todo!(),
-        Commands::Shell=>todo!(),
-        Commands::Tui=>todo!(),
-        Commands::Shutdown=>todo!(),
-        Commands::Connect => connect(&mut client, config.connection.server_ip).await,
+        Commands::Call => start_call(&mut client).await,
+        Commands::Hangup => hangup(&mut client).await,
+        Commands::Status => todo!(),
+        Commands::Shell => todo!(),
+        Commands::Tui => todo!(),
+        Commands::Shutdown => todo!(),
+        Commands::Connect => {
+            connect(
+                &mut client,
+                config.connection.server_ip,
+                config.connection.signaling_port,
+            )
+            .await
+        }
         Commands::Disconnect => disconnect(&mut client).await,
     };
 
@@ -138,7 +145,7 @@ fn apply_cli_to_config(cli: Cli, config: &mut Config) {
 
     let p = &mut config.audio.processing;
     update_if_some!(p.vad_threshold, cli.config.vad_threshold);
-    update_if_some!(p.noise_surpression, cli.config.noise_supression);
+    update_if_some!(p.noise_suppression, cli.config.noise_supression);
     update_if_some!(p.automatic_gain_control, cli.config.automatic_gain_control);
     update_if_some!(p.agc_target_level, cli.config.agc_target_level);
     update_if_some!(p.agc_max_gain, cli.config.agc_max_gain);
