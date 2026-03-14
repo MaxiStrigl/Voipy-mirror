@@ -7,7 +7,7 @@ service VoicechatDaemon {
   // Connection Management
   // ==========================================================================
 
-  // Establish a connection to the signaling server 
+  // Establish a connection to the signaling server
   rpc ConnectToServer(ConnectRequest) returns (ConnectResponse);
 
   // Disconnects from the signaling server
@@ -66,20 +66,20 @@ service VoicechatDaemon {
   rpc SubscribeStatus(SubscribeStatusRequest) returns (stream StatusUpdate);
 
   // Subscribe to real-time audio level updates (for UI-visualization)
-  rpc SubscribeAudioLevles(SubscribeAudioLevelsRequest) returns (stream AudioLevelsUpdate);
-
+  rpc SubscribeAudioLevels(SubscribeAudioLevelsRequest) returns (stream AudioLevelsUpdate);
 
   // ==========================================================================
   //  System
   // ==========================================================================
 
   // Gracefully shuts down the daemon
-  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse); 
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
 }
 
 // --- Connection & Call Messages ---
 message ConnectRequest {
   string address = 1;
+  uint32 port = 2;
 }
 message ConnectResponse {
   bool success = 1;
@@ -170,7 +170,7 @@ message ListDevicesResponse {
   message DeviceInfo {
     uint32 index = 1;
     string name = 2;
-    // TODO: Maybe add here capabilities (max channels, sample rates) 
+    // TODO: Maybe add here capabilities (max channels, sample rates)
   }
   repeated DeviceInfo devices = 1;
 }
@@ -204,15 +204,19 @@ message StatusUpdate {
   float ping_ms = 5;
 }
 
-message SubscribeAudioLevelsRequest {} 
+message SubscribeAudioLevelsRequest {}
 message AudioLevelsUpdate {
   float input_level = 1;
   float output_level = 2;
   bool is_speaking = 3;
 }
 
-message SetInputVolumeRequest { float volume = 1;}
+message SetInputVolumeRequest {
+  float volume = 1;
+}
 message SetInputVolumeResponse {}
 
-message SetOutputVolumeRequest { float volume = 1;}
+message SetOutputVolumeRequest {
+  float volume = 1;
+}
 message SetOutputVolumeResponse {}
