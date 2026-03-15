@@ -45,7 +45,9 @@ async fn main() -> Result<()> {
 
     let command = command.unwrap();
 
-    let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
+    let addr = format!("http://[::1]:{}", config.connection.daemon_port);
+
+    let mut client = VoicechatDaemonClient::connect(addr).await?;
 
     let res = match command {
         Commands::Call => start_call(&mut client).await,
@@ -128,7 +130,7 @@ fn apply_cli_to_config(cli: Cli, config: &mut Config) {
     let c = &mut config.connection;
     update_if_some!(c.server_ip, cli.config.server_ip);
     update_if_some!(c.signaling_port, cli.config.signaling_port);
-    update_if_some!(c.daemon_port, cli.config.daemon_port);
+    c.daemon_port = cli.config.daemon_port;
     update_if_some!(c.stun_servers, cli.config.stun_servers);
     update_if_some!(c.ice_timeout_seconds, cli.config.ice_timeout_seconds);
 

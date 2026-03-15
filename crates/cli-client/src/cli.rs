@@ -17,9 +17,9 @@ pub struct ConfigArgs {
     // --- Meta ---
     /// Don't save these configuration changes to the config file
     #[arg(long, global = true)]
-    pub dont_save: Option<bool>, 
-    
-    /// Use the provided config file 
+    pub dont_save: Option<bool>,
+
+    /// Use the provided config file
     #[arg(long, global = true)]
     pub config_file: Option<String>,
 
@@ -33,13 +33,13 @@ pub struct ConfigArgs {
     #[arg(long, global = true)]
     pub server_ip: Option<String>,
 
-    /// Signaling Server Port  
+    /// Signaling Server Port
     #[arg(long, global = true)]
     pub signaling_port: Option<u16>,
 
-    /// Local Daemon Port 
-    #[arg(long, global = true)]
-    pub daemon_port: Option<u16>,
+    /// Local Daemon Port
+    #[arg(long, global = true, default_value = "40001")]
+    pub daemon_port: u16,
 
     /// Comma separated list of STUN servers
     #[arg(long, global = true, value_delimiter = ',')]
@@ -50,11 +50,10 @@ pub struct ConfigArgs {
     pub ice_timeout_seconds: Option<u64>,
 
     // --- Audio Genera ---
-
     /// Input Volume multiplyer
     #[arg(long, global = true)]
     pub input_volume: Option<f32>,
-    
+
     /// Output Volume multiplyer
     #[arg(long, global = true)]
     pub output_volume: Option<f32>,
@@ -76,7 +75,6 @@ pub struct ConfigArgs {
     pub output_jitter_buffer_ms: Option<u32>,
 
     // --- Audio Processing ---
-    
     /// VAD threshold (0.0 - 1.0)
     #[arg(long, global = true)]
     pub vad_threshold: Option<f32>,
@@ -103,7 +101,7 @@ pub struct ConfigArgs {
 
     /// Low-pass filter Hz
     #[arg(long, global = true)]
-    pub low_pass_filter_hz: Option<f32>
+    pub low_pass_filter_hz: Option<f32>,
 }
 
 #[derive(Subcommand, Clone, Debug, PartialEq)]
@@ -114,7 +112,7 @@ pub enum Commands {
     Hangup,
     /// Get daemon status
     Status,
-    
+
     /// Start the interactive command shell
     #[command(alias = "interacitve")]
     Shell,
@@ -125,9 +123,9 @@ pub enum Commands {
     /// Shutdown the daemon
     Shutdown,
 
-    /// Connect to a server 
-    Connect, 
+    /// Connect to a server
+    Connect,
 
     /// Disconnect from a server
-    Disconnect
+    Disconnect,
 }

@@ -1,0 +1,9 @@
+pub mod handlers;
+pub mod manager;
+pub mod signaling;
+
+pub enum Command {
+    Connect { host: String, port: u16 },
+    Disconnect,
+    Call,
+}
