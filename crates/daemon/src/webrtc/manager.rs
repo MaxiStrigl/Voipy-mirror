@@ -199,6 +199,9 @@ impl WebRtcManager {
                     sig.send(SignalMessage::Offer(sdp)).await?;
                 }
             }
+            Command::Hangup => {
+                self.hangup().await;
+            }
             _ => todo!(),
         }
 
@@ -279,6 +282,16 @@ impl WebRtcManager {
 
         self.state = DaemonState::Disconnected;
         println!("Manager is now Disconnected")
+    }
+
+    async fn hangup(&mut self) {
+        if let Some(pc) = &mut self.peer_connection {
+            println!("Clearing up peek connection and media ");
+            let _ = pc.close().await;
+
+            self.capture = None;
+            self.playbacks.clear();
+        }
     }
 
     async fn start_playback(&mut self, track: Arc<TrackRemote>) -> Result<()> {

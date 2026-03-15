@@ -6,4 +6,5 @@ pub enum Command {
     Connect { host: String, port: u16 },
     Disconnect,
     Call,
+    Hangup,
 }

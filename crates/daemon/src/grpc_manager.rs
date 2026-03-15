@@ -77,7 +77,7 @@ impl VoicechatDaemon for VoiceChatService {
     /// Initiates a voice call with the connected peer"]
     async fn call(
         &self,
-        request: tonic::Request<CallRequest>,
+        _request: tonic::Request<CallRequest>,
     ) -> Result<TonicResponse<CallResponse>, TonicStatus> {
         self.command_sender
             .send(Command::Call)
@@ -90,29 +90,20 @@ impl VoicechatDaemon for VoiceChatService {
         }))
     }
 
-    #[doc = " Ends the current call"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn hangup<'life0, 'async_trait>(
-        &'life0 self,
+    /// Ends the current call
+    async fn hangup(
+        &self,
         request: tonic::Request<HangupRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<HangupResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    ) -> Result<TonicResponse<HangupResponse>, TonicStatus> {
+        self.command_sender
+            .send(Command::Hangup)
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        Ok(TonicResponse::new(HangupResponse {
+            success: true,
+            error_message: String::new(),
+        }))
     }
 
     #[doc = " Mutes or unmutes the microphone"]
