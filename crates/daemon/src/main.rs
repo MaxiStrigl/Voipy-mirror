@@ -4,7 +4,9 @@ mod webrtc;
 
 use anyhow::Result;
 use clap::Parser;
-use daemon_protocol::voicechat::voicechat_daemon_server::VoicechatDaemonServer;
+use daemon_protocol::voicechat::{
+    GetStatusResponse, voicechat_daemon_server::VoicechatDaemonServer,
+};
 use tokio::sync::{mpsc, watch};
 use tonic::transport::Server;
 
@@ -20,15 +22,16 @@ async fn main() -> Result<()> {
     let addr = format!("[::1]:{}", args.grpc_port).parse()?;
 
     let (command_sender, command_receiver) = mpsc::channel::<Command>(10);
+    let (status_sender, status_receiver) = watch::channel(GetStatusResponse::default());
     let (shutdown_sender, mut shutdown_receiver) = watch::channel(());
 
-    let mut manager = WebRtcManager::new(command_receiver)?;
+    let mut manager = WebRtcManager::new(command_receiver, status_sender)?;
 
     tokio::spawn(async move {
         manager.run().await;
     });
 
-    let daemon = VoiceChatService::new(command_sender, shutdown_sender);
+    let daemon = VoiceChatService::new(command_sender, status_receiver, shutdown_sender);
 
     Server::builder()
         .add_service(VoicechatDaemonServer::new(daemon))

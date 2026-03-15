@@ -20,13 +20,19 @@ type ResponseStream<T> = Pin<Box<dyn Stream<Item = GrpcResult<T>> + Send>>;
 
 pub struct VoiceChatService {
     command_sender: tokio::sync::mpsc::Sender<Command>,
+    status_receiver: watch::Receiver<GetStatusResponse>,
     shutdown_sender: watch::Sender<()>,
 }
 
 impl VoiceChatService {
-    pub fn new(command_sender: mpsc::Sender<Command>, shutdown_sender: watch::Sender<()>) -> Self {
+    pub fn new(
+        command_sender: mpsc::Sender<Command>,
+        status_receiver: watch::Receiver<GetStatusResponse>,
+        shutdown_sender: watch::Sender<()>,
+    ) -> Self {
         Self {
             command_sender,
+            status_receiver,
             shutdown_sender,
         }
     }
@@ -93,7 +99,7 @@ impl VoicechatDaemon for VoiceChatService {
     /// Ends the current call
     async fn hangup(
         &self,
-        request: tonic::Request<HangupRequest>,
+        _request: tonic::Request<HangupRequest>,
     ) -> Result<TonicResponse<HangupResponse>, TonicStatus> {
         self.command_sender
             .send(Command::Hangup)
@@ -318,29 +324,14 @@ impl VoicechatDaemon for VoiceChatService {
         todo!()
     }
 
-    #[doc = " Gets  the current status of the daemon (connection, call state)"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn get_status<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<GetStatusRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<GetStatusResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    /// Gets  the current status of the daemon (connection, call state)
+    async fn get_status(
+        &self,
+        _request: tonic::Request<GetStatusRequest>,
+    ) -> Result<TonicResponse<GetStatusResponse>, TonicStatus> {
+        let current_status = self.status_receiver.borrow().clone();
+
+        Ok(TonicResponse::new(current_status))
     }
 
     #[doc = " Server streaming response type for the SubscribeStatus method."]

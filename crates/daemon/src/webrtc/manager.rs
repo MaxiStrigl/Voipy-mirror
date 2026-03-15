@@ -1,9 +1,12 @@
 use anyhow::Result;
-use audio_playback::{Playback, PlaybackConfig};
-use std::{sync::Arc, time::Duration};
-
 use audio_capture::{Capture, CaptureConfig};
-use tokio::sync::mpsc::{self, Receiver};
+use audio_playback::{Playback, PlaybackConfig};
+use daemon_protocol::voicechat::{GetStatusResponse, get_status_response::Status};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{
+    mpsc::{self, Receiver},
+    watch,
+};
 use webrtc::{
     api::{
         API, APIBuilder,
@@ -11,10 +14,12 @@ use webrtc::{
         media_engine::{MIME_TYPE_OPUS, MediaEngine},
         setting_engine::SettingEngine,
     },
+    ice::candidate::CandidatePair,
     ice_transport::ice_candidate::RTCIceCandidateInit,
     interceptor::registry::Registry,
     peer_connection::{RTCPeerConnection, sdp::session_description::RTCSessionDescription},
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
+    stats::StatsReportType,
     track::{
         track_local::track_local_static_sample::TrackLocalStaticSample, track_remote::TrackRemote,
     },
@@ -47,6 +52,7 @@ enum DaemonState {
 
 pub struct WebRtcManager {
     command_receiver: Receiver<Command>,
+    status_sender: watch::Sender<GetStatusResponse>,
     state: DaemonState,
     signaling: Option<SignalingConnection>,
 
@@ -63,11 +69,15 @@ pub enum ManagerInternalEvent {
 }
 
 impl WebRtcManager {
-    pub fn new(command_receiver: Receiver<Command>) -> Result<Self> {
+    pub fn new(
+        command_receiver: Receiver<Command>,
+        status_sender: watch::Sender<GetStatusResponse>,
+    ) -> Result<Self> {
         Ok(Self {
             command_receiver,
             state: DaemonState::Disconnected,
             signaling: None,
+            status_sender,
             api: Self::setup_api()?,
             peer_connection: None,
             capture: None,
@@ -77,6 +87,8 @@ impl WebRtcManager {
 
     pub async fn run(&mut self) {
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel::<ManagerInternalEvent>();
+
+        let mut stats_interval = tokio::time::interval(Duration::from_secs(1));
 
         loop {
             tokio::select! {
@@ -105,6 +117,7 @@ impl WebRtcManager {
                 }
               }
 
+              // 3. Process WebRTC messages
               Some(event) = internal_rx.recv() => {
                 match event {
                     ManagerInternalEvent::RemoteTrackReceived(track) => { if let Err(e) = self.start_playback(track).await {
@@ -118,6 +131,15 @@ impl WebRtcManager {
                         };
                       }
                     },
+                }
+              }
+
+              // 4. Periodically poll WebRTC stats
+              _ = stats_interval.tick() => {
+                if self.peer_connection.is_some() {
+                  if let Err(e) = self.update_network_stats().await {
+                    eprintln!("Failed to poll stats: {}", e);
+                  }
                 }
               }
             }
@@ -299,6 +321,59 @@ impl WebRtcManager {
                 }
             }
         }
+    }
+
+    async fn update_network_stats(&self) -> Result<()> {
+        let pc = match &self.peer_connection {
+            Some(pc) => pc,
+            None => return Ok(()),
+        };
+
+        let stats = pc.get_stats().await;
+
+        let mut ping = 0.0;
+        let mut loss = 0.0;
+
+        for (_, report_type) in stats.reports {
+            // Get Ping (Round trip time)
+            if let StatsReportType::CandidatePair(pair_stats) = report_type {
+                ping = pair_stats.current_round_trip_time * 1000.0;
+            }
+
+            // Get packet loss (how many of my packets did not make it to the callee)
+            // TODO: This is not implemented as of version 0.17 of webrtc.
+        }
+
+        let mut current_status = self.status_sender.borrow().clone();
+
+        current_status.ping_ms = ping as f32;
+        current_status.packaet_loss_percent = -1.0;
+
+        let _ = self.status_sender.send(current_status);
+
+        Ok(())
+    }
+
+    async fn sync_status(&mut self) {
+        let mut response = self.status_sender.borrow().clone();
+
+        match &self.state {
+            DaemonState::Disconnected => response.status = Status::Idle as i32,
+            DaemonState::Connecting { host, .. } => {
+                response.status = Status::Connecting as i32;
+                response.connected_peer = host.clone();
+            }
+            DaemonState::Connected { host, .. } => {
+                response.status = Status::Connecting as i32;
+                response.connected_peer = host.clone()
+            }
+            DaemonState::InCall { host, .. } => {
+                response.status = Status::Connecting as i32;
+                response.connected_peer = host.clone()
+            }
+        }
+
+        let _ = self.status_sender.send(response);
     }
 
     async fn start_playback(&mut self, track: Arc<TrackRemote>) -> Result<()> {
