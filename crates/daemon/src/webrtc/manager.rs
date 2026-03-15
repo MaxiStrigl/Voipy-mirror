@@ -291,6 +291,13 @@ impl WebRtcManager {
 
             self.capture = None;
             self.playbacks.clear();
+
+            if let DaemonState::InCall { host, port } = &self.state {
+                self.state = DaemonState::Connected {
+                    host: host.clone(),
+                    port: *port,
+                }
+            }
         }
     }
 
