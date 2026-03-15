@@ -1,8 +1,9 @@
 use anyhow::Result;
+use audio_playback::{Playback, PlaybackConfig};
 use std::{sync::Arc, time::Duration};
 
 use audio_capture::{Capture, CaptureConfig};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{self, Receiver};
 use webrtc::{
     api::{
         API, APIBuilder,
@@ -10,10 +11,13 @@ use webrtc::{
         media_engine::{MIME_TYPE_OPUS, MediaEngine},
         setting_engine::SettingEngine,
     },
+    ice_transport::ice_candidate::RTCIceCandidateInit,
     interceptor::registry::Registry,
     peer_connection::{RTCPeerConnection, sdp::session_description::RTCSessionDescription},
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
-    track::track_local::track_local_static_sample::TrackLocalStaticSample,
+    track::{
+        track_local::track_local_static_sample::TrackLocalStaticSample, track_remote::TrackRemote,
+    },
 };
 
 use crate::webrtc::{
@@ -49,6 +53,13 @@ pub struct WebRtcManager {
     api: API,
     peer_connection: Option<Arc<RTCPeerConnection>>,
     capture: Option<Capture>,
+
+    playbacks: Vec<Playback>,
+}
+
+pub enum ManagerInternalEvent {
+    RemoteTrackReceived(Arc<TrackRemote>),
+    IceCandidateGenerated(RTCIceCandidateInit),
 }
 
 impl WebRtcManager {
@@ -60,15 +71,18 @@ impl WebRtcManager {
             api: Self::setup_api()?,
             peer_connection: None,
             capture: None,
+            playbacks: Vec::new(),
         })
     }
 
     pub async fn run(&mut self) {
+        let (internal_tx, mut internal_rx) = mpsc::unbounded_channel::<ManagerInternalEvent>();
+
         loop {
             tokio::select! {
               // 1. Process commands coming from the gRPC frontend
               Some(command) = self.command_receiver.recv() => {
-                self.handle_command(command).await;
+                self.handle_command(command, &internal_tx).await;
               }
 
               // 2. Process incoming messages from the signaling server
@@ -80,10 +94,30 @@ impl WebRtcManager {
                 }
               } => {
                 match recv_result {
-                  Ok(Some(msg)) => { self.handle_signaling_message(msg).await; },
+                  Ok(Some(msg)) => {
+                    if let Err(e) = self.handle_signaling_message(msg, &internal_tx).await {
+                      eprintln!("Failed to handle signaling message: {}", e);
+                    };
+                  },
                   Ok(None) | Err(_) => {
                     self.disconnect();
                   },
+                }
+              }
+
+              Some(event) = internal_rx.recv() => {
+                match event {
+                    ManagerInternalEvent::RemoteTrackReceived(track) => { if let Err(e) = self.start_playback(track).await {
+                      eprintln!("Error starting Playback: {}", e);
+                    }; },
+                    ManagerInternalEvent::IceCandidateGenerated(rtcice_candidate_init) => {
+                      if let Some(sig) = &mut self.signaling {
+                        if let Err(e) =
+                        sig.send(SignalMessage::Candidate(rtcice_candidate_init)).await {
+                          eprintln!("Error sending ice candidate: {}", e);
+                        };
+                      }
+                    },
                 }
               }
             }
@@ -121,7 +155,11 @@ impl WebRtcManager {
         Ok(api)
     }
 
-    pub async fn handle_command(&mut self, command: Command) -> Result<()> {
+    pub async fn handle_command(
+        &mut self,
+        command: Command,
+        internal_tx: &mpsc::UnboundedSender<ManagerInternalEvent>,
+    ) -> Result<()> {
         match command {
             Command::Connect { host, port } => {
                 self.state = DaemonState::Connecting {
@@ -148,7 +186,8 @@ impl WebRtcManager {
                 self.disconnect();
             }
             Command::Call => {
-                let pc = self.prepare_connection().await?;
+                println!("Starting call");
+                let pc = self.prepare_connection(internal_tx.clone()).await?;
 
                 // Create offer
                 let offer = pc.create_offer(None).await?;
@@ -166,10 +205,15 @@ impl WebRtcManager {
         Ok(())
     }
 
-    async fn handle_signaling_message(&mut self, msg: SignalMessage) -> Result<()> {
+    async fn handle_signaling_message(
+        &mut self,
+        msg: SignalMessage,
+        internal_tx: &mpsc::UnboundedSender<ManagerInternalEvent>,
+    ) -> Result<()> {
         match msg {
             SignalMessage::Offer(sdp) => {
-                let pc = self.prepare_connection().await?;
+                println!("<- Received offer from peer");
+                let pc = self.prepare_connection(internal_tx.clone()).await?;
 
                 let offer = RTCSessionDescription::offer(sdp)?;
                 pc.set_remote_description(offer).await?;
@@ -183,11 +227,11 @@ impl WebRtcManager {
                 }
             }
             SignalMessage::Answer(sdp) => {
-                println!("<- Received offer from peer");
+                println!("<- Received answer from peer");
 
                 if let Some(pc) = &self.peer_connection {
                     // Parse the string to an WebRTC answer
-                    let answer = match RTCSessionDescription::offer(sdp) {
+                    let answer = match RTCSessionDescription::answer(sdp) {
                         Ok(desc) => desc,
                         Err(e) => {
                             return Err(anyhow::anyhow!("Failed to parse Answer SDP: {}", e));
@@ -211,7 +255,11 @@ impl WebRtcManager {
                     eprintln!("Received Answer but no active PeerConnection exists");
                 }
             }
-            SignalMessage::Candidate(_rtcice_candidate_init) => todo!(),
+            SignalMessage::Candidate(rtcice_candidate_init) => {
+                if let Some(pc) = &mut self.peer_connection {
+                    pc.add_ice_candidate(rtcice_candidate_init).await?;
+                }
+            }
         }
 
         Ok(())
@@ -233,7 +281,25 @@ impl WebRtcManager {
         println!("Manager is now Disconnected")
     }
 
-    async fn prepare_connection(&mut self) -> Result<Arc<RTCPeerConnection>> {
+    async fn start_playback(&mut self, track: Arc<TrackRemote>) -> Result<()> {
+        println!("Starting audio playback for remote track: {}", track.id());
+
+        let playback = Playback::new(PlaybackConfig {
+            track: track,
+            sample_rate: 48000,
+            tokio_handle: tokio::runtime::Handle::current(),
+            channels: 1,
+        })?;
+
+        self.playbacks.push(playback);
+
+        Ok(())
+    }
+
+    async fn prepare_connection(
+        &mut self,
+        internal_tx: mpsc::UnboundedSender<ManagerInternalEvent>,
+    ) -> Result<Arc<RTCPeerConnection>> {
         // Create peer Connection
         let config = webrtc::peer_connection::configuration::RTCConfiguration::default();
         let pc = Arc::new(self.api.new_peer_connection(config).await?);
@@ -259,6 +325,8 @@ impl WebRtcManager {
             snippet_duration: 20,
             channels: 1,
         })?;
+
+        crate::webrtc::handlers::setup_pc_handler(&pc, internal_tx);
 
         self.peer_connection = Some(pc.clone());
         self.capture = Some(capture);
