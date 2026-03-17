@@ -224,6 +224,33 @@ impl WebRtcManager {
             Command::Hangup => {
                 self.hangup().await;
             }
+
+            Command::SetMute(active) => {
+                if let Some(capture) = &self.capture {
+                    // capture.set_volume(value);
+                }
+            }
+
+            Command::SetDeafen(active) => {
+                for playback in &self.playbacks {
+                    // playback.dea
+                }
+            }
+
+            Command::SetInputVolume(volume) => {
+                println!("Setting input volume");
+                if let Some(capture) = &mut self.capture {
+                    capture.set_volume(volume);
+                }
+            }
+
+            Command::SetOutputVolume(volume) => {
+                println!("Setting output volume");
+                for playback in &mut self.playbacks {
+                    playback.set_volume(volume);
+                }
+            }
+
             _ => todo!(),
         }
 

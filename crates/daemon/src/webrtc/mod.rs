@@ -7,4 +7,8 @@ pub enum Command {
     Disconnect,
     Call,
     Hangup,
+    SetMute(bool),
+    SetDeafen(bool),
+    SetInputVolume(f32),
+    SetOutputVolume(f32),
 }

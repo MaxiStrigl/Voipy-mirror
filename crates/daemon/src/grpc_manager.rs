@@ -9,7 +9,7 @@ use daemon_protocol::voicechat::{
     SetOutputVolumeResponse, ShutdownRequest, ShutdownResponse, StatusUpdate,
     SubscribeAudioLevelsRequest, SubscribeStatusRequest, voicechat_daemon_server::VoicechatDaemon,
 };
-use futures_util::Stream;
+use futures_util::{Stream, TryFutureExt};
 use tokio::sync::{mpsc, watch};
 use tonic::{Request as TonicRequest, Response as TonicResponse, Status as TonicStatus};
 
@@ -112,110 +112,60 @@ impl VoicechatDaemon for VoiceChatService {
         }))
     }
 
-    #[doc = " Mutes or unmutes the microphone"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn set_mute<'life0, 'async_trait>(
-        &'life0 self,
+    /// Mutes or unmutes the microphone
+    async fn set_mute(
+        &self,
         request: tonic::Request<MuteRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<MuteResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    ) -> Result<TonicResponse<MuteResponse>, TonicStatus> {
+        let active = request.into_inner().active;
+        self.command_sender
+            .send(Command::SetMute(active))
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        Ok(TonicResponse::new(MuteResponse {}))
     }
 
-    #[doc = " Deafens (mutes output) or undeafens the daemon"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn set_deafen<'life0, 'async_trait>(
-        &'life0 self,
+    /// Deafens (mutes output) or undeafens the daemon
+    async fn set_deafen(
+        &self,
         request: tonic::Request<DeafenRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<DeafenResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    ) -> Result<TonicResponse<DeafenResponse>, TonicStatus> {
+        let active = request.into_inner().active;
+        self.command_sender
+            .send(Command::SetDeafen(active))
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        Ok(TonicResponse::new(DeafenResponse {}))
     }
 
-    #[doc = " Sets the input (microphone) volume gain."]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn set_input_volume<'life0, 'async_trait>(
-        &'life0 self,
+    /// Sets the input (microphone) volume gain.
+    async fn set_input_volume(
+        &self,
         request: tonic::Request<SetInputVolumeRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<
-                        tonic::Response<SetInputVolumeResponse>,
-                        tonic::Status,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    ) -> Result<TonicResponse<SetInputVolumeResponse>, TonicStatus> {
+        let volume = request.into_inner().volume;
+        self.command_sender
+            .send(Command::SetInputVolume(volume))
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        Ok(TonicResponse::new(SetInputVolumeResponse {}))
     }
 
-    #[doc = " Sets the output (speaker) volume gain."]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn set_output_volume<'life0, 'async_trait>(
-        &'life0 self,
+    /// Sets the output (speaker) volume gain.
+    async fn set_output_volume(
+        &self,
         request: tonic::Request<SetOutputVolumeRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<
-                        tonic::Response<SetOutputVolumeResponse>,
-                        tonic::Status,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    ) -> Result<TonicResponse<SetOutputVolumeResponse>, TonicStatus> {
+        let volume = request.into_inner().volume;
+        self.command_sender
+            .send(Command::SetOutputVolume(volume))
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        Ok(TonicResponse::new(SetOutputVolumeResponse {}))
     }
 
     #[doc = " Applies the full configuration upgrade to the daemon"]
