@@ -3,9 +3,15 @@ use daemon_protocol::voicechat::{
     CallRequest, ConnectRequest, DisconnectRequest, HangupRequest,
     voicechat_daemon_client::VoicechatDaemonClient,
 };
+use daemon_protocol::voicechat::{
+    DeafenRequest, DeafenResponse, GetConfigRequest, GetConfigResponse, GetStatusRequest,
+    MuteRequest, SetInputVolumeRequest, SetOutputVolumeRequest,
+};
 use std::{env, process::Stdio, time::Duration};
 
 use std::process::Command as StdCommand;
+
+use crate::config::Config;
 
 pub async fn is_daemon_running() -> bool {
     VoicechatDaemonClient::connect("http://[::1]:40001")
@@ -15,87 +21,125 @@ pub async fn is_daemon_running() -> bool {
 
 pub async fn start_call(
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
-) -> Result<(), String> {
+) -> Result<()> {
     let request = tonic::Request::new(CallRequest {});
     println!("Sending start request...");
 
-    match client.call(request).await {
-        Ok(response) => {
-            let answer = response.into_inner();
-
-            if answer.success {
-                Ok(())
-            } else {
-                Err(format!("Failed to perform call: {}", answer.error_message))
-            }
-        }
-        Err(status) => Err(status.message().to_string()),
-    }
+    client.call(request).await?;
+    Ok(())
 }
 
-pub async fn hangup(
-    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
-) -> Result<(), String> {
+pub async fn hangup(client: &mut VoicechatDaemonClient<tonic::transport::Channel>) -> Result<()> {
     let request = tonic::Request::new(HangupRequest {});
     println!("Sending hangup request...");
-
-    match client.hangup(request).await {
-        Ok(response) => {
-            let answer = response.into_inner();
-
-            if answer.success {
-                Ok(())
-            } else {
-                Err(format!("Failed to hangup call: {}", answer.error_message))
-            }
-        }
-        Err(status) => Err(status.message().to_string()),
-    }
+    client.hangup(request).await;
+    Ok(())
 }
 
 pub async fn connect(
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
     address: String,
     port: u16,
-) -> Result<(), String> {
+) -> Result<()> {
     println!("Connecting to {}", &address);
     let request = tonic::Request::new(ConnectRequest {
         address,
         port: port as u32,
     });
 
-    match client.connect_to_server(request).await {
-        Ok(response) => {
-            let answer = response.into_inner();
-
-            if answer.success {
-                Ok(())
-            } else {
-                Err("Failed to connect to server".into())
-            }
-        }
-        Err(status) => Err(status.message().to_string()),
-    }
+    client.connect_to_server(request).await?;
+    Ok(())
 }
 
 pub async fn disconnect(
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
-) -> Result<(), String> {
-    println!("Dsconnecting from server");
+) -> Result<()> {
+    println!("Disconnecting from server");
     let request = tonic::Request::new(DisconnectRequest {});
 
-    match client.disconnect_from_server(request).await {
-        Ok(response) => {
-            let answer = response.into_inner();
+    client.disconnect_from_server(request).await?;
 
-            if answer.success {
-                Ok(())
-            } else {
-                Err("Failed to disconnect from server".into())
-            }
-        }
-        Err(status) => Err(status.message().to_string()),
-    }
+    Ok(())
+}
+
+pub async fn set_input_volume(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    volume: f32,
+) -> Result<()> {
+    println!("Setting input volume");
+    let request = tonic::Request::new(SetInputVolumeRequest { volume });
+
+    let _ = client.set_input_volume(request).await;
+
+    Ok(())
+}
+
+pub async fn set_output_volume(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    volume: f32,
+) -> Result<()> {
+    println!("Setting output volume");
+    let request = tonic::Request::new(SetOutputVolumeRequest { volume });
+
+    let _ = client.set_output_volume(request).await?;
+
+    Ok(())
+}
+
+pub async fn get_status(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+) -> Result<()> {
+    println!("Getting status");
+    let request = tonic::Request::new(GetStatusRequest {});
+
+    let res = client.get_status(request).await?;
+
+    println!("{:?}", res.into_inner());
+
+    Ok(())
+}
+
+pub async fn set_config(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    config: Config,
+) -> Result<()> {
+    // let request = tonic::Request::new(ConfigureRequest { user: todo!(), connection: todo!(), audio: todo!() })
+    Ok(())
+}
+
+pub async fn get_current_config(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+) -> Result<GetConfigResponse> {
+    println!("Getting config");
+    let request = tonic::Request::new(GetConfigRequest {});
+
+    let res = client.get_config(request).await?;
+
+    Ok(res.into_inner())
+}
+
+pub async fn set_mute(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    active: bool,
+) -> Result<()> {
+    println!("Setting mute enabled: {}", active);
+    let request = tonic::Request::new(MuteRequest { active });
+
+    client.set_mute(request).await?;
+
+    Ok(())
+}
+
+pub async fn set_deafen(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    active: bool,
+) -> Result<()> {
+    println!("Setting deafen enabled: {}", active);
+    let request = tonic::Request::new(DeafenRequest { active });
+
+    client.set_deafen(request).await?;
+
+    Ok(())
 }
 
 pub async fn start_daemon() -> Result<()> {
