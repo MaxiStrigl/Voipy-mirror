@@ -71,6 +71,7 @@ pub struct CaptureConfig {
 pub struct Capture {
     _stream: cpal::Stream,
     volume: Arc<AtomicU32>,
+    mute: Arc<AtomicBool>,
     worker_thread: Option<std::thread::JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
 }
@@ -86,6 +87,8 @@ impl Capture {
         let (prod, mut cons) = setup_ringbuffer(&stream_config);
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let volume_clone = volume.clone();
+        let mute = Arc::new(AtomicBool::new(true));
+        let mute_clone = mute.clone();
         let stream = setup_input_stream(sample_format, device, &stream_config, prod)?;
 
         let shutdown_signal = Arc::new(AtomicBool::new(false));
@@ -110,9 +113,13 @@ impl Capture {
                     }
                 };
 
-            let mut processor =
-                AudioProcessor::new(stream_config.sample_rate.0, stream_config.channels, volume_clone)
-                    .expect("Failed to create processor");
+            let mut processor = AudioProcessor::new(
+                stream_config.sample_rate.0,
+                stream_config.channels,
+                volume_clone,
+                mute_clone,
+            )
+            .expect("Failed to create processor");
 
             let mut read_buffer = vec![0.0f32; frame_size];
 
@@ -161,6 +168,7 @@ impl Capture {
         Ok(Self {
             _stream: stream,
             volume,
+            mute,
             worker_thread: Some(worker_thread),
             shutdown_signal,
         })
@@ -171,7 +179,15 @@ impl Capture {
     }
 
     pub fn set_volume(&mut self, value: f32) {
-        self.volume.store(value.to_bits(), Ordering::Release);    
+        self.volume.store(value.to_bits(), Ordering::Release);
+    }
+
+    pub fn get_mute(&self) -> bool {
+        self.mute.load(Relaxed)
+    }
+
+    pub fn set_mute(&mut self, active: bool) {
+        self.mute.store(active, Ordering::Release);
     }
 }
 
@@ -301,11 +317,17 @@ struct AudioProcessor {
     hold_frames: usize,
     output_staging_buffer: Vec<f32>,
     agc: agc::Agc,
-    volume: Arc<AtomicU32>
+    volume: Arc<AtomicU32>,
+    mute: Arc<AtomicBool>,
 }
 
 impl AudioProcessor {
-    fn new(input_sample_rate: u32, input_channels: u16, volume: Arc<AtomicU32>) -> Result<Self, CaptureError> {
+    fn new(
+        input_sample_rate: u32,
+        input_channels: u16,
+        volume: Arc<AtomicU32>,
+        mute: Arc<AtomicBool>,
+    ) -> Result<Self, CaptureError> {
         let mut encoder = Encoder::new(48000, opus::Channels::Mono, opus::Application::Voip)?;
 
         encoder.set_bitrate(opus::Bitrate::Bits(32000))?;
@@ -351,6 +373,7 @@ impl AudioProcessor {
             output_staging_buffer: Vec::with_capacity(4800),
             agc,
             volume,
+            mute,
         })
     }
 
@@ -418,6 +441,9 @@ impl AudioProcessor {
             let release_speed = 0.02;
             let hold_time_samples = (48000.0 as f32 * 0.1) as usize;
             let volume: f32 = f32::from_bits(self.volume.load(Relaxed));
+            let mute: bool = self.mute.load(Relaxed);
+
+            let effective_volume = if mute { 0.0 } else { volume };
 
             let mut max_amp = 0.0;
             for sample in chunk.iter_mut() {
@@ -430,7 +456,7 @@ impl AudioProcessor {
             if max_amp > open_threshold && max_speech_prob > 0.4 {
                 self.gate_level = 1.0;
                 self.hold_frames = hold_time_samples;
-            } else if max_amp < close_threshold  || max_speech_prob <= 0.4{
+            } else if max_amp < close_threshold || max_speech_prob <= 0.4 {
                 if self.hold_frames > 0 {
                     self.hold_frames = self.hold_frames.saturating_sub(chunk.len())
                 } else {
@@ -447,7 +473,7 @@ impl AudioProcessor {
             }
 
             for sample in chunk.iter_mut() {
-                *sample = self.post_chain.filter_mono(*sample) * volume;
+                *sample = self.post_chain.filter_mono(*sample) * effective_volume;
             }
 
             let output_size = self.encoder.encode_float(chunk, &mut self.opus_out)?;
