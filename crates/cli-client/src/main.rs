@@ -9,8 +9,9 @@ use daemon_protocol::voicechat::voicechat_daemon_client::VoicechatDaemonClient;
 use crate::{
     cli::{Cli, Command, ConfigAction},
     client::{
-        connect, disconnect, get_status, hangup, is_daemon_running, set_config, set_deafen,
-        set_input_volume, set_mute, set_output_volume, start_call, start_daemon,
+        connect, disconnect, get_current_config, get_monitor, get_status, hangup,
+        is_daemon_running, send_shutdown, set_config, set_deafen, set_input_volume, set_mute,
+        set_output_volume, start_call, start_daemon,
     },
     config::Config,
 };
@@ -76,8 +77,8 @@ async fn main() -> Result<()> {
         Command::Config { action } => handle_config(&mut client, action).await?,
         Command::Devices { input, output } => todo!(),
         Command::Status => get_status(&mut client).await?,
-        Command::Monitor => todo!(),
-        Command::Shutdown => todo!(),
+        Command::Monitor => get_monitor(&mut client).await?,
+        Command::Shutdown => send_shutdown(&mut client).await?,
         Command::Shell => todo!(),
         Command::Tui => todo!(),
     }
@@ -90,44 +91,70 @@ async fn handle_config(
     action: ConfigAction,
 ) -> Result<()> {
     match action {
-        ConfigAction::Get { key } => todo!(),
-        ConfigAction::Set(config_set_args) => todo!(),
-        ConfigAction::Load { path } => todo!(),
-        ConfigAction::Save { path } => todo!(),
-        ConfigAction::List => todo!(),
+        ConfigAction::Get { key } => {
+            let resp = get_current_config(client).await?;
+            let config = Config::from(resp);
+
+            if let Some(k) = key {
+                match k.as_str() {
+                    _ => (),
+                }
+            } else {
+                println!("{}", toml::to_string_pretty(&config)?);
+            }
+        }
+        ConfigAction::Set(args) => {
+            let resp = get_current_config(client).await?;
+            let mut config = Config::from(resp);
+
+            let user = &mut config.user;
+            let connection = &mut config.connection;
+            let audio = &mut config.audio;
+            let processing = &mut audio.processing;
+
+            update_if_some!(user.name, args.username);
+
+            update_if_some!(connection.server_ip, args.server_addr);
+            update_if_some!(connection.signaling_port, args.server_port);
+            update_if_some!(connection.ice_timeout_seconds, args.ice_timeout_seconds);
+            update_if_some!(connection.stun_servers, args.stun_servers);
+
+            update_if_some!(audio.input_device, args.input_device);
+            update_if_some!(audio.output_device, args.output_device);
+            update_if_some!(audio.input_volume, args.input_volume);
+            update_if_some!(audio.output_volume, args.output_volume);
+            update_if_some!(audio.input_latency_ms, args.input_latency_ms);
+            update_if_some!(audio.output_jitter_buffer_ms, args.jitter_buffer_ms);
+
+            update_if_some!(processing.agc_max_gain, args.agc_max_gain);
+            update_if_some!(processing.agc_target_level, args.agc_target_level);
+            update_if_some!(
+                processing.automatic_gain_control,
+                args.automatic_gain_control
+            );
+            update_if_some!(processing.high_pass_filter_hz, args.high_pass_filter_hz);
+            update_if_some!(processing.low_pass_filter_hz, args.low_pass_filter_hz);
+            update_if_some!(processing.noise_suppression, args.noise_suppression);
+            update_if_some!(processing.vad_threshold, args.vad_threshold);
+
+            set_config(client, config).await?;
+        }
+        ConfigAction::Load { path } => {
+            let config = Config::load(path)?;
+            set_config(client, config).await?;
+            println!("Configuration Loaded")
+        }
+        ConfigAction::Save { path } => {
+            let resp = get_current_config(client).await?;
+            let config = Config::from(resp);
+            config.save(path)?;
+        }
+        ConfigAction::List => {
+            let resp = get_current_config(client).await?;
+            let config = Config::from(resp);
+            println!("{}", toml::to_string_pretty(&config)?);
+        }
     }
+
+    Ok(())
 }
-
-// fn apply_cli_to_config(cli: Cli, config: &mut Config) {
-//     // User
-//     let u = &mut config.user;
-//     update_if_some!(u.name, cli.config.username);
-
-//     // Connection
-//     let c = &mut config.connection;
-//     update_if_some!(c.server_ip, cli.config.server_ip);
-//     update_if_some!(c.signaling_port, cli.config.signaling_port);
-//     c.daemon_port = cli.config.daemon_port;
-//     update_if_some!(c.stun_servers, cli.config.stun_servers);
-//     update_if_some!(c.ice_timeout_seconds, cli.config.ice_timeout_seconds);
-
-//     // Audio
-//     let a = &mut config.audio;
-//     update_if_some!(a.input_volume, cli.config.input_volume);
-//     update_if_some!(a.output_volume, cli.config.output_volume);
-//     update_if_some!(a.input_device, cli.config.input_device);
-//     update_if_some!(a.input_latency_ms, cli.config.input_latency_ms);
-//     update_if_some!(
-//         a.output_jitter_buffer_ms,
-//         cli.config.output_jitter_buffer_ms
-//     );
-
-//     let p = &mut config.audio.processing;
-//     update_if_some!(p.vad_threshold, cli.config.vad_threshold);
-//     update_if_some!(p.noise_suppression, cli.config.noise_supression);
-//     update_if_some!(p.automatic_gain_control, cli.config.automatic_gain_control);
-//     update_if_some!(p.agc_target_level, cli.config.agc_target_level);
-//     update_if_some!(p.agc_max_gain, cli.config.agc_max_gain);
-//     update_if_some!(p.high_pass_filter_hz, cli.config.high_pass_filter_hz);
-//     update_if_some!(p.low_pass_filter_hz, cli.config.low_pass_filter_hz);
-// }

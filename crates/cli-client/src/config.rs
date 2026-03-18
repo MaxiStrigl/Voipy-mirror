@@ -1,4 +1,5 @@
 use anyhow::Result;
+use daemon_protocol::voicechat::GetConfigResponse;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
@@ -145,6 +146,43 @@ impl Default for Processing {
     }
 }
 
+impl From<GetConfigResponse> for Config {
+    fn from(proto: GetConfigResponse) -> Self {
+        let user = proto.user.unwrap_or_default();
+        let conn = proto.connection.unwrap_or_default();
+        let audio = proto.audio.unwrap_or_default();
+        let proc = audio.processing.unwrap_or_default();
+
+        Config {
+            user: User { name: user.name },
+            connection: Connection {
+                server_ip: conn.server_ip,
+                signaling_port: conn.signaling_port as u16,
+                daemon_port: 40001,
+                stun_servers: conn.stun_servers,
+                ice_timeout_seconds: conn.ice_timeout_seconds,
+            },
+            audio: Audio {
+                input_volume: audio.input_volume,
+                output_volume: audio.output_volume,
+                input_device: audio.input_device.unwrap_or_default(),
+                output_device: audio.output_device.unwrap_or_default(),
+                input_latency_ms: audio.input_latency_ms,
+                output_jitter_buffer_ms: audio.ouput_jutter_buffer_ms,
+                processing: Processing {
+                    vad_threshold: proc.vad_threshold,
+                    noise_suppression: proc.noise_supression,
+                    automatic_gain_control: proc.automatic_gain_control,
+                    agc_target_level: proc.agc_tartet_level,
+                    agc_max_gain: proc.agc_max_gain,
+                    high_pass_filter_hz: proc.high_pass_filter_hz,
+                    low_pass_filter_hz: proc.low_pass_filter_hz,
+                },
+            },
+        }
+    }
+}
+
 impl Config {
     pub fn load(path: Option<String>) -> Result<Self> {
         let config_path = Self::get_config_path(path);
@@ -166,7 +204,7 @@ impl Config {
         Ok(Config::default())
     }
 
-    pub fn _save(&self, path: Option<String>) -> Result<()> {
+    pub fn save(&self, path: Option<String>) -> Result<()> {
         let config_path = Self::get_config_path(path);
 
         if let Some(path) = config_path {
