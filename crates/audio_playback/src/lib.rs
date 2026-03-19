@@ -6,7 +6,7 @@ use opus::Decoder;
 use ringbuf::HeapRb;
 use ringbuf::traits::*;
 use rubato::{ResampleError, Resampler, ResamplerConstructionError};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
@@ -97,6 +97,7 @@ impl JitterMetrics {
 pub struct Playback {
     _stream: cpal::Stream,
     volume: Arc<AtomicU32>,
+    deafen: Arc<AtomicBool>,
 }
 
 impl Playback {
@@ -105,6 +106,7 @@ impl Playback {
 
         let (mut prod, cons): (ProdType, ConsType) = setup_ringbuffer();
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let deafen = Arc::new(AtomicBool::new(false));
 
         let stream =
             setup_output_stream(sample_format, device, &stream_config, cons, volume.clone())?;
@@ -188,6 +190,7 @@ impl Playback {
         Ok(Self {
             _stream: stream,
             volume,
+            deafen,
         })
     }
 
@@ -199,6 +202,14 @@ impl Playback {
         // println!("Changed volume to: {}", value);
         self.volume.store(value.to_bits(), Ordering::Release);
     }
+
+    pub fn get_deafen(&self) -> bool {
+        self.deafen.load(Ordering::Relaxed)
+    }
+
+    pub fn set_deafen(&mut self) {
+        self.deafen.store(true, Ordering::Release);
+    }
 }
 
 fn setup_output_stream(
@@ -207,6 +218,7 @@ fn setup_output_stream(
     stream_config: &StreamConfig,
     mut consumer: ConsType,
     volume: Arc<AtomicU32>,
+    deafen: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, PlaybackError> {
     let mut metrics = JitterMetrics::new(stream_config.sample_rate.0, stream_config.channels);
     let mut is_buffering = true;
@@ -226,10 +238,17 @@ fn setup_output_stream(
 
         let read = consumer.pop_slice(data);
 
-        let vol = f32::from_bits(volume.load(Ordering::Relaxed));
-        if (vol - 1.0).abs() > f32::EPSILON {
-            for sample in data.iter_mut() {
-                *sample *= vol;
+        let is_deafened = deafen.load(Ordering::Relaxed);
+
+        if is_deafened {
+            data.fill(0.0);
+        } else {
+            let vol = f32::from_bits(volume.load(Ordering::Relaxed));
+
+            if (vol - 1.0).abs() > f32::EPSILON {
+                for sample in data.iter_mut() {
+                    *sample *= vol;
+                }
             }
         }
 

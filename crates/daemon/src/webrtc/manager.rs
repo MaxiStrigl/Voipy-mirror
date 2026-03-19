@@ -85,7 +85,7 @@ impl WebRtcManager {
         })
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<()> {
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel::<ManagerInternalEvent>();
 
         let mut stats_interval = tokio::time::interval(Duration::from_secs(1));
@@ -94,7 +94,7 @@ impl WebRtcManager {
             tokio::select! {
               // 1. Process commands coming from the gRPC frontend
               Some(command) = self.command_receiver.recv() => {
-                self.handle_command(command, &internal_tx).await;
+                self.handle_command(command, &internal_tx).await?;
               }
 
               // 2. Process incoming messages from the signaling server
@@ -226,14 +226,14 @@ impl WebRtcManager {
             }
 
             Command::SetMute(active) => {
-                if let Some(capture) = &self.capture {
-                    // capture.set_volume(value);
+                if let Some(capture) = &mut self.capture {
+                    capture.set_mute(active);
                 }
             }
 
             Command::SetDeafen(active) => {
                 for playback in &self.playbacks {
-                    // playback.dea
+                    playback.set_deafen();
                 }
             }
 
