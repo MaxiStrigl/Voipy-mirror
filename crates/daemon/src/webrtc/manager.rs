@@ -233,7 +233,7 @@ impl WebRtcManager {
 
             Command::SetDeafen(active) => {
                 for playback in &mut self.playbacks {
-                    playback.set_deafen();
+                    playback.set_deafen(active);
                 }
             }
 
