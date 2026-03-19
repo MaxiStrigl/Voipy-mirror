@@ -87,7 +87,7 @@ impl Capture {
         let (prod, mut cons) = setup_ringbuffer(&stream_config);
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let volume_clone = volume.clone();
-        let mute = Arc::new(AtomicBool::new(true));
+        let mute = Arc::new(AtomicBool::new(false));
         let mute_clone = mute.clone();
         let stream = setup_input_stream(sample_format, device, &stream_config, prod)?;
 

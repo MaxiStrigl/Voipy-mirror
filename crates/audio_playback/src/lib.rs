@@ -108,8 +108,14 @@ impl Playback {
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let deafen = Arc::new(AtomicBool::new(false));
 
-        let stream =
-            setup_output_stream(sample_format, device, &stream_config, cons, volume.clone())?;
+        let stream = setup_output_stream(
+            sample_format,
+            device,
+            &stream_config,
+            cons,
+            volume.clone(),
+            deafen.clone(),
+        )?;
 
         let track = config.track;
         let mut decoder = Decoder::new(48000, opus::Channels::Mono)?;
@@ -207,8 +213,8 @@ impl Playback {
         self.deafen.load(Ordering::Relaxed)
     }
 
-    pub fn set_deafen(&mut self) {
-        self.deafen.store(true, Ordering::Release);
+    pub fn set_deafen(&mut self, value: bool) {
+        self.deafen.store(value, Ordering::Release);
     }
 }
 
