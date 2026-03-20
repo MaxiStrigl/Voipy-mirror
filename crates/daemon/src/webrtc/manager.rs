@@ -14,7 +14,6 @@ use webrtc::{
         media_engine::{MIME_TYPE_OPUS, MediaEngine},
         setting_engine::SettingEngine,
     },
-    ice::candidate::CandidatePair,
     ice_transport::ice_candidate::RTCIceCandidateInit,
     interceptor::registry::Registry,
     peer_connection::{RTCPeerConnection, sdp::session_description::RTCSessionDescription},
@@ -195,6 +194,7 @@ impl WebRtcManager {
                     port,
                     retry_count: 0,
                 };
+                self.sync_status().await;
 
                 match SignalingConnection::connect(&host, port).await {
                     Ok(connection) => {
@@ -202,7 +202,8 @@ impl WebRtcManager {
                         self.state = DaemonState::Connected {
                             host: host,
                             port: port,
-                        }
+                        };
+                        self.sync_status().await;
                     }
                     Err(e) => {
                         eprintln!("Failed to connect to signaling Server: {}", e);
@@ -306,7 +307,8 @@ impl WebRtcManager {
                         self.state = DaemonState::InCall {
                             host: host.clone(),
                             port: *port,
-                        }
+                        };
+                        self.sync_status().await;
                     }
                     println!("WebRTC Handshake complete. Audio should be flowing");
                 } else {
@@ -336,6 +338,7 @@ impl WebRtcManager {
         }
 
         self.state = DaemonState::Disconnected;
+        self.sync_status().await;
         println!("Manager is now Disconnected")
     }
 
@@ -351,7 +354,8 @@ impl WebRtcManager {
                 self.state = DaemonState::Connected {
                     host: host.clone(),
                     port: *port,
-                }
+                };
+                self.sync_status().await;
             }
         }
     }
