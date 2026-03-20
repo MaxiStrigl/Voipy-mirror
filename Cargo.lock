@@ -4155,7 +4155,6 @@ dependencies = [
  "anyhow",
  "clap 4.5.51",
  "clearscreen",
- "cpal",
  "daemon-protocol",
  "directories",
  "serde",

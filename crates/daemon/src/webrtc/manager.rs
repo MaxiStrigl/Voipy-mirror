@@ -94,6 +94,9 @@ impl WebRtcManager {
             tokio::select! {
               // 1. Process commands coming from the gRPC frontend
               Some(command) = self.command_receiver.recv() => {
+                if command == Command::Shutdown {
+                  break;
+                }
                 self.handle_command(command, &internal_tx).await?;
               }
 
@@ -112,7 +115,7 @@ impl WebRtcManager {
                     };
                   },
                   Ok(None) | Err(_) => {
-                    self.disconnect();
+                    self.disconnect().await;
                   },
                 }
               }
@@ -144,6 +147,9 @@ impl WebRtcManager {
               }
             }
         }
+
+        self.disconnect().await;
+        Ok(())
     }
 
     fn setup_api() -> Result<API> {
@@ -317,7 +323,7 @@ impl WebRtcManager {
         Ok(())
     }
 
-    fn disconnect(&mut self) {
+    async fn disconnect(&mut self) {
         println!("Cleaning up connections and media");
         self.signaling = None;
 

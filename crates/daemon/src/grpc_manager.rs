@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{net::Shutdown, pin::Pin};
 
 use daemon_protocol::voicechat::{
     AudioLevelsUpdate, CallRequest, CallResponse, ConfigureRequest, ConfigureResponse,
@@ -9,7 +9,7 @@ use daemon_protocol::voicechat::{
     SetOutputVolumeResponse, ShutdownRequest, ShutdownResponse, StatusUpdate,
     SubscribeAudioLevelsRequest, SubscribeStatusRequest, voicechat_daemon_server::VoicechatDaemon,
 };
-use futures_util::{Stream, TryFutureExt};
+use futures_util::{Stream, future::ok};
 use tokio::sync::{mpsc, watch};
 use tonic::{Request as TonicRequest, Response as TonicResponse, Status as TonicStatus};
 
@@ -218,59 +218,21 @@ impl VoicechatDaemon for VoiceChatService {
         todo!()
     }
 
-    #[doc = " Lists available audio input devices"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn list_input_devices<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<ListDevicesRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<
-                        tonic::Response<ListDevicesResponse>,
-                        tonic::Status,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    /// Lists available audio input devices
+    async fn list_input_devices(
+        &self,
+        _request: tonic::Request<ListDevicesRequest>,
+    ) -> Result<tonic::Response<ListDevicesResponse>, tonic::Status> {
+        // as of cpal 0.17 has very bad printing/information gathering. I wait until they have proper support for pipewire/pulse
         todo!()
     }
 
-    #[doc = " Lists available audio output devices"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn list_output_devices<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<ListDevicesRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<
-                        tonic::Response<ListDevicesResponse>,
-                        tonic::Status,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    /// Lists available audio output devices
+    async fn list_output_devices(
+        &self,
+        _request: tonic::Request<ListDevicesRequest>,
+    ) -> Result<tonic::Response<ListDevicesResponse>, tonic::Status> {
+        // as of cpal 0.17 has very bad printing/information gathering. I wait until they have proper support for pipewire/pulse
         todo!()
     }
 
@@ -287,86 +249,33 @@ impl VoicechatDaemon for VoiceChatService {
     #[doc = " Server streaming response type for the SubscribeStatus method."]
     type SubscribeStatusStream = ResponseStream<StatusUpdate>;
 
-    #[doc = " Subscribe to server updates (server events, errors, changes)"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn subscribe_status<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<SubscribeStatusRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<
-                        tonic::Response<Self::SubscribeStatusStream>,
-                        tonic::Status,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    /// Subscribe to server updates (server events, errors, changes
+    async fn subscribe_status(
+        &self,
+        _request: tonic::Request<SubscribeStatusRequest>,
+    ) -> Result<tonic::Response<Self::SubscribeStatusStream>, tonic::Status> {
         todo!()
     }
 
     type SubscribeAudioLevelsStream = ResponseStream<AudioLevelsUpdate>;
 
-    #[doc = " Subscribe to real-time audio level updates (for UI-visualization)"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn subscribe_audio_levels<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<SubscribeAudioLevelsRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<
-                        tonic::Response<Self::SubscribeAudioLevelsStream>,
-                        tonic::Status,
-                    >,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
+    /// Subscribe to real-time audio level updates (for UI-visualization)
+    async fn subscribe_audio_levels(
+        &self,
+        _request: tonic::Request<SubscribeAudioLevelsRequest>,
+    ) -> std::result::Result<tonic::Response<Self::SubscribeAudioLevelsStream>, tonic::Status> {
         todo!()
     }
 
-    #[doc = " Gracefully shuts down the daemon"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn shutdown<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<ShutdownRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<ShutdownResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    /// Gracefully shuts down the daemon
+    async fn shutdown(
+        &self,
+        _request: tonic::Request<ShutdownRequest>,
+    ) -> Result<tonic::Response<ShutdownResponse>, tonic::Status> {
+        let _ = self.command_sender.send(Command::Shutdown).await;
+
+        self.shutdown_sender.send(()).ok();
+
+        Ok(TonicResponse::new(ShutdownResponse {}))
     }
 }

@@ -27,9 +27,7 @@ async fn main() -> Result<()> {
 
     let mut manager = WebRtcManager::new(command_receiver, status_sender)?;
 
-    tokio::spawn(async move {
-        manager.run().await;
-    });
+    let manager_handle = tokio::spawn(async move { manager.run().await });
 
     let daemon = VoiceChatService::new(command_sender, status_receiver, shutdown_sender);
 
@@ -40,6 +38,9 @@ async fn main() -> Result<()> {
             println!("gRPC server shutting down");
         })
         .await?;
+
+    println!("gRPC Server stopped, cleaning up manager");
+    let _ = manager_handle.await;
 
     Ok(())
 }
