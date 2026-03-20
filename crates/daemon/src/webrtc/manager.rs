@@ -369,7 +369,7 @@ impl WebRtcManager {
         let stats = pc.get_stats().await;
 
         let mut ping = 0.0;
-        let mut loss = 0.0;
+        let mut _loss = 0.0;
 
         for (_, report_type) in stats.reports {
             // Get Ping (Round trip time)
@@ -401,11 +401,11 @@ impl WebRtcManager {
                 response.connected_peer = host.clone();
             }
             DaemonState::Connected { host, .. } => {
-                response.status = Status::Connecting as i32;
+                response.status = Status::Connected as i32;
                 response.connected_peer = host.clone()
             }
             DaemonState::InCall { host, .. } => {
-                response.status = Status::Connecting as i32;
+                response.status = Status::InCall as i32;
                 response.connected_peer = host.clone()
             }
         }

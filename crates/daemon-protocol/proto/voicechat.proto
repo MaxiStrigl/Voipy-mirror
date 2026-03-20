@@ -184,7 +184,7 @@ message GetStatusResponse {
   enum Status {
     Idle = 0;
     Connecting = 1;
-    Online = 2;
+    Connected = 2;
     InCall = 3;
     Error = 4;
   }
