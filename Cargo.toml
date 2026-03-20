@@ -18,7 +18,7 @@ anyhow = "1.0.100"
 audio_capture = { path = "./crates/audio_capture/" }
 audio_playback = { path = "./crates/audio_playback/" }
 clap = { version = "4.5.4", features = ["derive"] }
-cpal = "0.16.0"
+cpal = "0.17.0"
 daemon-protocol = { path = "./crates/daemon-protocol/" }
 futures-util = "0.3.31"
 opus = "0.3.0"

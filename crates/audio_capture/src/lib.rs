@@ -96,7 +96,7 @@ impl Capture {
         let track = config.track.clone();
         let tokio_handle = config.tokio_handle.clone();
 
-        let frame_size = (stream_config.sample_rate.0 as f32
+        let frame_size = (stream_config.sample_rate as f32
             * (config.snippet_duration as f32 / 1000.0)) as usize
             * stream_config.channels as usize;
 
@@ -114,7 +114,7 @@ impl Capture {
                 };
 
             let mut processor = AudioProcessor::new(
-                stream_config.sample_rate.0,
+                stream_config.sample_rate,
                 stream_config.channels,
                 volume_clone,
                 mute_clone,
@@ -242,8 +242,7 @@ fn setup_ringbuffer(
 ) {
     let latency_ms = 200;
     let buffer_capacity =
-        (stream_config.sample_rate.0 as usize * stream_config.channels as usize * latency_ms)
-            / 1000;
+        (stream_config.sample_rate as usize * stream_config.channels as usize * latency_ms) / 1000;
 
     let rb = HeapRb::<f32>::new(buffer_capacity);
     rb.split()
@@ -260,7 +259,7 @@ fn setup_device(
     println!("Using input device: {}", device.name()?);
 
     let configs: Vec<_> = device.supported_input_configs()?.collect();
-    let target_rate = cpal::SampleRate(config.sample_rate);
+    let target_rate = config.sample_rate;
     let target_fmt = cpal::SampleFormat::F32;
 
     let supports_48k = |c: &SupportedStreamConfigRange| {

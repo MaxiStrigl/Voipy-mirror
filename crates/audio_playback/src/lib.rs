@@ -124,10 +124,10 @@ impl Playback {
         let mut resample_staging_buffer = Vec::<f32>::new();
 
         let (mut resampler, mut resample_in_buf, mut resample_out_buf) =
-            if stream_config.sample_rate.0 != 48000 {
+            if stream_config.sample_rate != 48000 {
                 let resampler = rubato::FftFixedInOut::<f32>::new(
                     48000,
-                    stream_config.sample_rate.0 as usize,
+                    stream_config.sample_rate as usize,
                     1024,
                     1,
                 )?;
@@ -226,7 +226,7 @@ fn setup_output_stream(
     volume: Arc<AtomicU32>,
     deafen: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, PlaybackError> {
-    let mut metrics = JitterMetrics::new(stream_config.sample_rate.0, stream_config.channels);
+    let mut metrics = JitterMetrics::new(stream_config.sample_rate, stream_config.channels);
     let mut is_buffering = true;
     let mut decay_counter = 0;
 
@@ -321,7 +321,7 @@ fn setup_device(
     println!("Using output device: {}", device.name()?);
 
     let configs: Vec<_> = device.supported_output_configs()?.collect();
-    let target_rate = cpal::SampleRate(config.sample_rate);
+    let target_rate = config.sample_rate;
     let target_fmt = cpal::SampleFormat::F32;
 
     let supports_48k = |c: &SupportedStreamConfigRange| {
