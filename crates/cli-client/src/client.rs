@@ -1,8 +1,9 @@
 use anyhow::Result;
 use daemon_protocol::voicechat::{
     AudioConfig, ConfigureRequest, DeafenRequest, DeafenResponse, GetConfigRequest,
-    GetConfigResponse, GetStatusRequest, MuteRequest, ProcessingConfig, SetInputVolumeRequest,
-    SetOutputVolumeRequest, ShutdownRequest, SubscribeStatusRequest, UserConfig,
+    GetConfigResponse, GetStatusRequest, ListDevicesRequest, MuteRequest, ProcessingConfig,
+    SetInputVolumeRequest, SetOutputVolumeRequest, ShutdownRequest, SubscribeStatusRequest,
+    UserConfig,
 };
 use daemon_protocol::voicechat::{
     CallRequest, ConnectRequest, DisconnectRequest, HangupRequest,
@@ -98,6 +99,26 @@ pub async fn get_status(
 
     println!("{:?}", res.into_inner());
 
+    Ok(())
+}
+
+pub async fn get_devices(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    input: bool,
+    output: bool,
+) -> Result<()> {
+    if input {
+        let request = tonic::Request::new(ListDevicesRequest {});
+        let response = client.list_input_devices(request).await?;
+        let input_devices = response.into_inner();
+        println!("Input Devices:\n{:#?}", input_devices);
+    }
+    if output {
+        let request = tonic::Request::new(ListDevicesRequest {});
+        let response = client.list_output_devices(request).await?;
+        let input_devices = response.into_inner();
+        println!("Input Devices:\n{:#?}", input_devices);
+    }
     Ok(())
 }
 

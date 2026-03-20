@@ -9,7 +9,7 @@ use daemon_protocol::voicechat::voicechat_daemon_client::VoicechatDaemonClient;
 use crate::{
     cli::{Cli, Command, ConfigAction},
     client::{
-        connect, disconnect, get_current_config, get_monitor, get_status, hangup,
+        connect, disconnect, get_current_config, get_devices, get_monitor, get_status, hangup,
         is_daemon_running, send_shutdown, set_config, set_deafen, set_input_volume, set_mute,
         set_output_volume, start_call, start_daemon,
     },
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
             }
         }
         Command::Config { action } => handle_config(&mut client, action).await?,
-        Command::Devices { input, output } => todo!(),
+        Command::Devices { input, output } => get_devices(&mut client, input, output).await?,
         Command::Status => get_status(&mut client).await?,
         Command::Monitor => get_monitor(&mut client).await?,
         Command::Shutdown => send_shutdown(&mut client).await?,
