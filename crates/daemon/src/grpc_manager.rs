@@ -246,7 +246,7 @@ impl VoicechatDaemon for VoiceChatService {
         Ok(TonicResponse::new(current_status))
     }
 
-    #[doc = " Server streaming response type for the SubscribeStatus method."]
+    /// Server streaming response type for the SubscribeStatus method.
     type SubscribeStatusStream = ResponseStream<StatusUpdate>;
 
     /// Subscribe to server updates (server events, errors, changes
@@ -254,7 +254,33 @@ impl VoicechatDaemon for VoiceChatService {
         &self,
         _request: tonic::Request<SubscribeStatusRequest>,
     ) -> Result<tonic::Response<Self::SubscribeStatusStream>, tonic::Status> {
-        todo!()
+        let status_rx = self.status_receiver.clone();
+
+        let output_stream =
+            futures_util::stream::unfold((status_rx, true), |(mut rx, is_first)| async move {
+                if !is_first {
+                    if rx.changed().await.is_err() {
+                        // Channel closed
+                        return None;
+                    }
+                }
+
+                let status = rx.borrow_and_update().clone();
+
+                let update = StatusUpdate {
+                    state: status.status,
+                    error_message: status.error_message,
+                    connected_peer: status.connected_peer,
+                    packaet_loss_percent: status.packaet_loss_percent,
+                    ping_ms: status.ping_ms,
+                };
+
+                Some((Ok(update), (rx, false)))
+            });
+
+        Ok(TonicResponse::new(
+            Box::pin(output_stream) as Self::SubscribeStatusStream
+        ))
     }
 
     type SubscribeAudioLevelsStream = ResponseStream<AudioLevelsUpdate>;
