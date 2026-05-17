@@ -39,6 +39,8 @@ pub enum CaptureError {
     DeviceNameError(#[from] cpal::DeviceNameError),
     #[error("A cpal supported configs error occured: {0}")]
     SupportedStreamConfigsError(#[from] cpal::SupportedStreamConfigsError),
+    #[error("A cpal device enumeration error occured: {0}")]
+    DevicesError(#[from] cpal::DevicesError),
     #[error("An invalid number of channels was provided {0}")]
     InvlaidChannelCount(u32),
     #[error("An invalid format was provided {0}")]
@@ -66,6 +68,30 @@ pub struct CaptureConfig {
     pub snippet_duration: u32,
     /// Desired amount of channels
     pub channels: u16,
+    /// Prefred input device by name (None = default)
+    pub input_device: Option<String>,
+    /// Ring-buffer latency ms
+    pub input_latency_ms: u32,
+    /// Processing Settings
+    pub processing: ProcessingConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProcessingConfig {
+    /// Vad open threshold
+    pub vad_threshold: f32,
+    /// Enable/disable nnnoise denoiser + speach-probability
+    pub noise_suppression: bool,
+    /// Enable AGC
+    pub agc_enabled: bool,
+    /// AGC target level (0..1)
+    pub agc_target_level: f32,
+    /// AGC max gain
+    pub agc_max_gain: f32,
+    /// High pass filter cutof in Hz
+    pub high_pass_filter_hz: f32,
+    /// Low pass filter cutof in Hz
+    pub low_pass_filter_hz: f32,
 }
 
 pub struct Capture {
@@ -84,7 +110,7 @@ impl Capture {
             Err(_) => return Err(CaptureError::NoSupportedConfig),
         };
 
-        let (prod, mut cons) = setup_ringbuffer(&stream_config);
+        let (prod, mut cons) = setup_ringbuffer(&stream_config, config.input_latency_ms);
         let volume = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let volume_clone = volume.clone();
         let mute = Arc::new(AtomicBool::new(false));
@@ -118,6 +144,7 @@ impl Capture {
                 stream_config.channels,
                 volume_clone,
                 mute_clone,
+                &config.processing,
             )
             .expect("Failed to create processor");
 
@@ -191,6 +218,15 @@ impl Capture {
     }
 }
 
+impl Drop for Capture {
+    fn drop(&mut self) {
+        self.shutdown_signal.store(true, Ordering::Release);
+        if let Some(handle) = self.worker_thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn setup_input_stream(
     sample_format: SampleFormat,
     device: Device,
@@ -236,13 +272,15 @@ fn setup_input_stream(
 
 fn setup_ringbuffer(
     stream_config: &StreamConfig,
+    latency_ms: u32,
 ) -> (
     Caching<Arc<SharedRb<ringbuf::storage::Heap<f32>>>, true, false>,
     Caching<Arc<SharedRb<ringbuf::storage::Heap<f32>>>, false, true>,
 ) {
-    let latency_ms = 200;
-    let buffer_capacity =
-        (stream_config.sample_rate as usize * stream_config.channels as usize * latency_ms) / 1000;
+    let buffer_capacity = (stream_config.sample_rate as usize
+        * stream_config.channels as usize
+        * latency_ms as usize)
+        / 1000;
 
     let rb = HeapRb::<f32>::new(buffer_capacity);
     rb.split()
@@ -252,11 +290,21 @@ fn setup_device(
     config: &CaptureConfig,
 ) -> Result<(Device, StreamConfig, SampleFormat), Box<dyn std::error::Error>> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or(CaptureError::NoInputDevice)?;
-
-    println!("Using input device: {}", device.name()?);
+    let device = match &config.input_device {
+        Some(name) => host
+            .input_devices()?
+            .find(|device| {
+                device
+                    .description()
+                    .map(|description| description.name() == name)
+                    .unwrap_or(false)
+            })
+            .ok_or(CaptureError::NoInputDevice)?,
+        None => host
+            .default_input_device()
+            .ok_or(CaptureError::NoInputDevice)?,
+    };
+    println!("Using input device: {}", device.description()?.name());
 
     let configs: Vec<_> = device.supported_input_configs()?.collect();
     let target_rate = config.sample_rate;
@@ -318,6 +366,10 @@ struct AudioProcessor {
     agc: agc::Agc,
     volume: Arc<AtomicU32>,
     mute: Arc<AtomicBool>,
+    vad_theshold: f32,
+    vad_close_theshold: f32,
+    noise_supression: bool,
+    agc_enabled: bool,
 }
 
 impl AudioProcessor {
@@ -326,14 +378,14 @@ impl AudioProcessor {
         input_channels: u16,
         volume: Arc<AtomicU32>,
         mute: Arc<AtomicBool>,
+        processing: &ProcessingConfig,
     ) -> Result<Self, CaptureError> {
         let mut encoder = Encoder::new(48000, opus::Channels::Mono, opus::Application::Voip)?;
-
         encoder.set_bitrate(opus::Bitrate::Bits(32000))?;
         encoder.set_vbr(true)?;
 
-        let chain = dcblock() >> highpass_hz(120.0, 0.707);
-        let post_chain = lowpass_hz(6000.0, 0.707);
+        let chain = dcblock() >> highpass_hz(processing.high_pass_filter_hz, 0.707);
+        let post_chain = lowpass_hz(processing.low_pass_filter_hz, 0.707);
 
         let mut fx_chain = Box::new(chain);
         fx_chain.set_sample_rate(input_sample_rate as f64);
@@ -373,6 +425,10 @@ impl AudioProcessor {
             agc,
             volume,
             mute,
+            vad_theshold: processing.vad_threshold,
+            vad_close_theshold: processing.vad_threshold / 3.0,
+            noise_supression: processing.noise_suppression,
+            agc_enabled: processing.agc_enabled,
         })
     }
 
@@ -423,20 +479,24 @@ impl AudioProcessor {
             let mut offset = 0;
             let chunk = &mut self.output_staging_buffer[..960];
 
-            while offset + 480 <= chunk.len() {
-                let sub_chunk = &mut chunk[offset..offset + 480];
-                sub_chunk.iter_mut().for_each(|f| *f *= SCALE_UP);
-                max_speech_prob = max_speech_prob.max(
-                    self.denoiser
-                        .process_frame(&mut self.denoise_buffer, sub_chunk),
-                );
+            if self.noise_supression {
+                while offset + 480 <= chunk.len() {
+                    let sub_chunk = &mut chunk[offset..offset + 480];
+                    sub_chunk.iter_mut().for_each(|f| *f *= SCALE_UP);
+                    max_speech_prob = max_speech_prob.max(
+                        self.denoiser
+                            .process_frame(&mut self.denoise_buffer, sub_chunk),
+                    );
 
-                chunk[offset..offset + 480].copy_from_slice(&self.denoise_buffer);
-                offset += 480;
+                    chunk[offset..offset + 480].copy_from_slice(&self.denoise_buffer);
+                    offset += 480;
+                }
+            } else {
+                max_speech_prob = 1.0;
             }
 
-            let open_threshold = 0.03;
-            let close_threshold = 0.01;
+            let open_threshold = self.vad_theshold;
+            let close_threshold = self.vad_close_theshold;
             let release_speed = 0.02;
             let hold_time_samples = (48000.0 as f32 * 0.1) as usize;
             let volume: f32 = f32::from_bits(self.volume.load(Relaxed));
@@ -447,15 +507,14 @@ impl AudioProcessor {
             let mut max_amp = 0.0;
             for sample in chunk.iter_mut() {
                 *sample *= SCALE_DOWN;
-
                 let abs = sample.abs();
                 max_amp = max_amp.max(abs);
             }
 
-            if max_amp > open_threshold && max_speech_prob > 0.4 {
+            if max_amp > open_threshold && max_speech_prob > 0.6 {
                 self.gate_level = 1.0;
                 self.hold_frames = hold_time_samples;
-            } else if max_amp < close_threshold || max_speech_prob <= 0.4 {
+            } else if max_amp < close_threshold || max_speech_prob <= 0.6 {
                 if self.hold_frames > 0 {
                     self.hold_frames = self.hold_frames.saturating_sub(chunk.len())
                 } else {
@@ -467,7 +526,7 @@ impl AudioProcessor {
                 *sample *= self.gate_level;
             }
 
-            if max_speech_prob > 0.4 {
+            if self.agc_enabled && max_speech_prob > 0.6 {
                 self.agc.process(chunk);
             }
 

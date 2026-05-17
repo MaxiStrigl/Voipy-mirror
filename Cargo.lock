@@ -4158,6 +4158,7 @@ dependencies = [
  "daemon-protocol",
  "directories",
  "serde",
+ "serde_json",
  "tokio",
  "toml",
  "tonic",

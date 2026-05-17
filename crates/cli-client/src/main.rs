@@ -4,7 +4,10 @@ mod config;
 
 use anyhow::Result;
 use clap::Parser;
-use daemon_protocol::voicechat::voicechat_daemon_client::VoicechatDaemonClient;
+use daemon_protocol::voicechat::{
+    GetConfigRequest, voicechat_daemon_client::VoicechatDaemonClient,
+};
+use serde_json::Value;
 
 use crate::{
     cli::{Cli, Command, ConfigAction},
@@ -15,14 +18,6 @@ use crate::{
     },
     config::Config,
 };
-
-macro_rules! update_if_some {
-    ($target:expr, $source:expr) => {
-        if let Some(value) = $source {
-            $target = value
-        }
-    };
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -92,69 +87,58 @@ async fn handle_config(
 ) -> Result<()> {
     match action {
         ConfigAction::Get { key } => {
-            let resp = get_current_config(client).await?;
-            let config = Config::from(resp);
+            let response = client.get_config(GetConfigRequest {}).await?.into_inner();
+            let config: Config = response.into();
 
-            if let Some(k) = key {
-                match k.as_str() {
-                    _ => (),
+            if let Some(path) = key {
+                let mut current_value: Value = serde_json::to_value(config)?;
+
+                for part in path.split('.') {
+                    if let Value::Object(map) = current_value {
+                        if let Some(v) = map.get(part) {
+                            current_value = v.clone();
+                        } else {
+                            println!("Key '{}' not found", path);
+                            return Ok(());
+                        }
+                    } else {
+                        println!("Key '{}' is invalid", path);
+                        return Ok(());
+                    }
                 }
+                println!("{} = {}", path, current_value);
             } else {
-                println!("{}", toml::to_string_pretty(&config)?);
+                println!("Please provide a key (e.g. 'audio.input_volume')");
             }
+            Ok(())
         }
-        ConfigAction::Set(args) => {
-            let resp = get_current_config(client).await?;
-            let mut config = Config::from(resp);
+        ConfigAction::Set(config_set_args) => {
+            let response = client.get_config(GetConfigRequest {}).await?.into_inner();
+            let mut config: Config = response.into();
 
-            let user = &mut config.user;
-            let connection = &mut config.connection;
-            let audio = &mut config.audio;
-            let processing = &mut audio.processing;
+            config.apply_args(config_set_args);
 
-            update_if_some!(user.name, args.username);
-
-            update_if_some!(connection.server_ip, args.server_addr);
-            update_if_some!(connection.signaling_port, args.server_port);
-            update_if_some!(connection.ice_timeout_seconds, args.ice_timeout_seconds);
-            update_if_some!(connection.stun_servers, args.stun_servers);
-
-            update_if_some!(audio.input_device, args.input_device);
-            update_if_some!(audio.output_device, args.output_device);
-            update_if_some!(audio.input_volume, args.input_volume);
-            update_if_some!(audio.output_volume, args.output_volume);
-            update_if_some!(audio.input_latency_ms, args.input_latency_ms);
-            update_if_some!(audio.output_jitter_buffer_ms, args.jitter_buffer_ms);
-
-            update_if_some!(processing.agc_max_gain, args.agc_max_gain);
-            update_if_some!(processing.agc_target_level, args.agc_target_level);
-            update_if_some!(
-                processing.automatic_gain_control,
-                args.automatic_gain_control
-            );
-            update_if_some!(processing.high_pass_filter_hz, args.high_pass_filter_hz);
-            update_if_some!(processing.low_pass_filter_hz, args.low_pass_filter_hz);
-            update_if_some!(processing.noise_suppression, args.noise_suppression);
-            update_if_some!(processing.vad_threshold, args.vad_threshold);
+            config.save(None)?;
 
             set_config(client, config).await?;
+
+            Ok(())
         }
         ConfigAction::Load { path } => {
             let config = Config::load(path)?;
-            set_config(client, config).await?;
-            println!("Configuration Loaded")
+            set_config(client, config).await
         }
         ConfigAction::Save { path } => {
-            let resp = get_current_config(client).await?;
-            let config = Config::from(resp);
-            config.save(path)?;
+            let response = get_current_config(client).await?;
+            let config = Config::from(response);
+            config.save(path)
         }
         ConfigAction::List => {
-            let resp = get_current_config(client).await?;
-            let config = Config::from(resp);
-            println!("{}", toml::to_string_pretty(&config)?);
+            let response = get_current_config(client).await?;
+            let config: Config = response.into();
+            let json = serde_json::to_string_pretty(&config)?;
+            println!("{}", json);
+            Ok(())
         }
     }
-
-    Ok(())
 }

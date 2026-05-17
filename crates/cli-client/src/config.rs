@@ -1,7 +1,20 @@
 use anyhow::Result;
-use daemon_protocol::voicechat::GetConfigResponse;
+use daemon_protocol::voicechat::{
+    AudioConfig, ConfigureRequest, ConnectionConfig, GetConfigResponse, ProcessingConfig,
+    UserConfig,
+};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
+
+use crate::cli::ConfigSetArgs;
+
+macro_rules! update_if_some {
+    ($target:expr, $source:expr) => {
+        if let Some(value) = $source {
+            $target = value
+        }
+    };
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -17,6 +30,76 @@ impl Default for Config {
             user: User::default(),
             connection: Connection::default(),
             audio: Audio::default(),
+        }
+    }
+}
+
+impl From<GetConfigResponse> for Config {
+    fn from(proto: GetConfigResponse) -> Self {
+        let user = proto.user.unwrap_or_default();
+        let connection = proto.connection.unwrap_or_default();
+        let audio = proto.audio.unwrap_or_default();
+        let processing = audio.processing.unwrap_or_default();
+
+        Config {
+            user: User { name: user.name },
+            connection: Connection {
+                server_ip: connection.server_ip,
+                signaling_port: connection.signaling_port as u16,
+                daemon_port: Connection::default().daemon_port,
+                stun_servers: connection.stun_servers,
+                ice_timeout_seconds: connection.ice_timeout_seconds,
+            },
+            audio: Audio {
+                input_volume: audio.input_volume,
+                output_volume: audio.output_volume,
+                input_device: audio.input_device.unwrap_or_else(|| "default".to_string()),
+                output_device: audio.output_device.unwrap_or_else(|| "default".to_string()),
+                input_latency_ms: audio.input_latency_ms,
+                output_jitter_buffer_ms: audio.output_jitter_buffer_ms,
+                processing: Processing {
+                    vad_threshold: processing.vad_threshold,
+                    noise_suppression: processing.noise_supression,
+                    automatic_gain_control: processing.automatic_gain_control,
+                    agc_target_level: processing.agc_tartet_level,
+                    agc_max_gain: processing.agc_max_gain,
+                    high_pass_filter_hz: processing.high_pass_filter_hz,
+                    low_pass_filter_hz: processing.low_pass_filter_hz,
+                },
+            },
+        }
+    }
+}
+
+impl Into<ConfigureRequest> for Config {
+    fn into(self) -> ConfigureRequest {
+        ConfigureRequest {
+            user: Some(UserConfig {
+                name: self.user.name,
+            }),
+            connection: Some(ConnectionConfig {
+                server_ip: self.connection.server_ip,
+                signaling_port: self.connection.signaling_port as u32,
+                stun_servers: self.connection.stun_servers,
+                ice_timeout_seconds: self.connection.ice_timeout_seconds,
+            }),
+            audio: Some(AudioConfig {
+                input_volume: self.audio.input_volume,
+                output_volume: self.audio.output_volume,
+                input_device: Some(self.audio.input_device),
+                output_device: Some(self.audio.output_device),
+                input_latency_ms: self.audio.input_latency_ms,
+                output_jitter_buffer_ms: self.audio.output_jitter_buffer_ms,
+                processing: Some(ProcessingConfig {
+                    vad_threshold: self.audio.processing.vad_threshold,
+                    noise_supression: self.audio.processing.noise_suppression,
+                    automatic_gain_control: self.audio.processing.automatic_gain_control,
+                    agc_tartet_level: self.audio.processing.agc_target_level,
+                    agc_max_gain: self.audio.processing.agc_max_gain,
+                    high_pass_filter_hz: self.audio.processing.high_pass_filter_hz,
+                    low_pass_filter_hz: self.audio.processing.low_pass_filter_hz,
+                }),
+            }),
         }
     }
 }
@@ -146,43 +229,6 @@ impl Default for Processing {
     }
 }
 
-impl From<GetConfigResponse> for Config {
-    fn from(proto: GetConfigResponse) -> Self {
-        let user = proto.user.unwrap_or_default();
-        let conn = proto.connection.unwrap_or_default();
-        let audio = proto.audio.unwrap_or_default();
-        let proc = audio.processing.unwrap_or_default();
-
-        Config {
-            user: User { name: user.name },
-            connection: Connection {
-                server_ip: conn.server_ip,
-                signaling_port: conn.signaling_port as u16,
-                daemon_port: 40001,
-                stun_servers: conn.stun_servers,
-                ice_timeout_seconds: conn.ice_timeout_seconds,
-            },
-            audio: Audio {
-                input_volume: audio.input_volume,
-                output_volume: audio.output_volume,
-                input_device: audio.input_device.unwrap_or_default(),
-                output_device: audio.output_device.unwrap_or_default(),
-                input_latency_ms: audio.input_latency_ms,
-                output_jitter_buffer_ms: audio.ouput_jutter_buffer_ms,
-                processing: Processing {
-                    vad_threshold: proc.vad_threshold,
-                    noise_suppression: proc.noise_supression,
-                    automatic_gain_control: proc.automatic_gain_control,
-                    agc_target_level: proc.agc_tartet_level,
-                    agc_max_gain: proc.agc_max_gain,
-                    high_pass_filter_hz: proc.high_pass_filter_hz,
-                    low_pass_filter_hz: proc.low_pass_filter_hz,
-                },
-            },
-        }
-    }
-}
-
 impl Config {
     pub fn load(path: Option<String>) -> Result<Self> {
         let config_path = Self::get_config_path(path);
@@ -220,5 +266,41 @@ impl Config {
         path.map(PathBuf::from).or_else(|| {
             directories::BaseDirs::new().map(|d| d.config_dir().join("voipyc").join("config.toml"))
         })
+    }
+
+    pub fn apply_args(&mut self, args: ConfigSetArgs) {
+        // User
+        update_if_some!(self.user.name, args.username);
+
+        // Connection
+        update_if_some!(self.connection.server_ip, args.server_addr);
+        if let Some(port) = args.server_port {
+            self.connection.signaling_port = port
+        };
+        if let Some(timeout) = args.ice_timeout_seconds {
+            self.connection.ice_timeout_seconds = timeout as u64;
+        }
+
+        // Audio
+        update_if_some!(self.audio.input_volume, args.input_volume);
+        update_if_some!(self.audio.output_volume, args.output_volume);
+        update_if_some!(self.audio.input_device, args.input_device);
+        update_if_some!(self.audio.input_latency_ms, args.input_latency_ms);
+        update_if_some!(self.audio.output_jitter_buffer_ms, args.jitter_buffer_ms);
+
+        update_if_some!(self.audio.processing.vad_threshold, args.vad_threshold);
+        update_if_some!(
+            self.audio.processing.noise_suppression,
+            args.noise_suppression
+        );
+        update_if_some!(
+            self.audio.processing.automatic_gain_control,
+            args.automatic_gain_control
+        );
+        update_if_some!(
+            self.audio.processing.agc_target_level,
+            args.agc_target_level
+        );
+        update_if_some!(self.audio.processing.agc_max_gain, args.agc_max_gain);
     }
 }

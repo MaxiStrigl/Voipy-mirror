@@ -1,13 +1,12 @@
 use anyhow::Result;
 use daemon_protocol::voicechat::{
-    AudioConfig, ConfigureRequest, DeafenRequest, DeafenResponse, GetConfigRequest,
-    GetConfigResponse, GetStatusRequest, ListDevicesRequest, MuteRequest, ProcessingConfig,
-    SetInputVolumeRequest, SetOutputVolumeRequest, ShutdownRequest, SubscribeStatusRequest,
-    UserConfig,
-};
-use daemon_protocol::voicechat::{
     CallRequest, ConnectRequest, DisconnectRequest, HangupRequest,
     voicechat_daemon_client::VoicechatDaemonClient,
+};
+use daemon_protocol::voicechat::{
+    DeafenRequest, GetConfigRequest, GetConfigResponse, GetStatusRequest, ListDevicesRequest,
+    MuteRequest, SetInputVolumeRequest, SetOutputVolumeRequest, ShutdownRequest,
+    SubscribeStatusRequest,
 };
 use std::thread::sleep;
 use std::{env, process::Stdio, time::Duration};
@@ -35,7 +34,7 @@ pub async fn start_call(
 pub async fn hangup(client: &mut VoicechatDaemonClient<tonic::transport::Channel>) -> Result<()> {
     let request = tonic::Request::new(HangupRequest {});
     println!("Sending hangup request...");
-    client.hangup(request).await;
+    client.hangup(request).await?;
     Ok(())
 }
 
@@ -126,37 +125,8 @@ pub async fn set_config(
     client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
     config: Config,
 ) -> Result<()> {
-    let request = tonic::Request::new(ConfigureRequest {
-        user: Some(UserConfig {
-            name: config.user.name,
-        }),
-        connection: Some(daemon_protocol::voicechat::ConnectionConfig {
-            server_ip: config.connection.server_ip,
-            signaling_port: config.connection.signaling_port as u32,
-            stun_servers: config.connection.stun_servers,
-            ice_timeout_seconds: config.connection.ice_timeout_seconds,
-        }),
-        audio: Some(AudioConfig {
-            input_volume: config.audio.input_volume,
-            output_volume: config.audio.output_volume,
-            input_device: Some(config.audio.input_device),
-            output_device: Some(config.audio.output_device),
-            input_latency_ms: config.audio.input_latency_ms,
-            ouput_jutter_buffer_ms: config.audio.output_jitter_buffer_ms,
-            processing: Some(ProcessingConfig {
-                vad_threshold: config.audio.processing.vad_threshold,
-                noise_supression: config.audio.processing.noise_suppression,
-                automatic_gain_control: config.audio.processing.automatic_gain_control,
-                agc_tartet_level: config.audio.processing.agc_target_level,
-                agc_max_gain: config.audio.processing.agc_max_gain,
-                high_pass_filter_hz: config.audio.processing.high_pass_filter_hz,
-                low_pass_filter_hz: config.audio.processing.low_pass_filter_hz,
-            }),
-        }),
-    });
-
+    let request = tonic::Request::new(config.into());
     client.configure(request).await?;
-
     Ok(())
 }
 
@@ -189,9 +159,7 @@ pub async fn set_deafen(
 ) -> Result<()> {
     println!("Setting deafen enabled: {}", active);
     let request = tonic::Request::new(DeafenRequest { active });
-
     client.set_deafen(request).await?;
-
     Ok(())
 }
 

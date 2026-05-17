@@ -151,7 +151,7 @@ message AudioConfig {
   optional string input_device = 3;
   optional string output_device = 4;
   uint32 input_latency_ms = 5;
-  uint32 ouput_jutter_buffer_ms = 6;
+  uint32 output_jitter_buffer_ms = 6;
   ProcessingConfig processing = 7;
 }
 

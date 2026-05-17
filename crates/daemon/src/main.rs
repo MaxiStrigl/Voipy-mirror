@@ -1,4 +1,5 @@
 mod cli;
+mod config;
 mod grpc_manager;
 mod webrtc;
 

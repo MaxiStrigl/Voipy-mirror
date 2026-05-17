@@ -14,19 +14,23 @@ use webrtc::{
         media_engine::{MIME_TYPE_OPUS, MediaEngine},
         setting_engine::SettingEngine,
     },
-    ice_transport::ice_candidate::RTCIceCandidateInit,
+    ice_transport::{ice_candidate::RTCIceCandidateInit, ice_server::RTCIceServer},
     interceptor::registry::Registry,
     peer_connection::{RTCPeerConnection, sdp::session_description::RTCSessionDescription},
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
     stats::StatsReportType,
     track::{
-        track_local::track_local_static_sample::TrackLocalStaticSample, track_remote::TrackRemote,
+        self, track_local::track_local_static_sample::TrackLocalStaticSample,
+        track_remote::TrackRemote,
     },
 };
 
-use crate::webrtc::{
-    Command,
-    signaling::{SignalMessage, SignalingConnection},
+use crate::{
+    config::DaemonConfig,
+    webrtc::{
+        Command,
+        signaling::{SignalMessage, SignalingConnection},
+    },
 };
 
 enum DaemonState {
@@ -58,8 +62,14 @@ pub struct WebRtcManager {
     api: API,
     peer_connection: Option<Arc<RTCPeerConnection>>,
     capture: Option<Capture>,
+    audio_track: Option<Arc<TrackLocalStaticSample>>,
 
     playbacks: Vec<Playback>,
+    remote_tracks: Vec<Arc<TrackRemote>>,
+
+    config: DaemonConfig,
+    muted: bool,
+    deafened: bool,
 }
 
 pub enum ManagerInternalEvent {
@@ -77,10 +87,15 @@ impl WebRtcManager {
             state: DaemonState::Disconnected,
             signaling: None,
             status_sender,
-            api: Self::setup_api()?,
+            api: Self::setup_api(Duration::from_secs(5))?,
             peer_connection: None,
             capture: None,
+            audio_track: None,
             playbacks: Vec::new(),
+            remote_tracks: Vec::new(),
+            config: DaemonConfig::default(),
+            muted: false,
+            deafened: false,
         })
     }
 
@@ -93,9 +108,6 @@ impl WebRtcManager {
             tokio::select! {
               // 1. Process commands coming from the gRPC frontend
               Some(command) = self.command_receiver.recv() => {
-                if command == Command::Shutdown {
-                  break;
-                }
                 self.handle_command(command, &internal_tx).await?;
               }
 
@@ -146,12 +158,9 @@ impl WebRtcManager {
               }
             }
         }
-
-        self.disconnect().await;
-        Ok(())
     }
 
-    fn setup_api() -> Result<API> {
+    fn setup_api(ice_timeout: Duration) -> Result<API> {
         let mut m = MediaEngine::default();
 
         m.register_codec(
@@ -171,7 +180,7 @@ impl WebRtcManager {
         registry = register_default_interceptors(registry, &mut m)?;
 
         let mut settings_engine = SettingEngine::default();
-        settings_engine.set_ice_timeouts(Some(Duration::from_secs(5)), None, None);
+        settings_engine.set_ice_timeouts(Some(ice_timeout), None, None);
 
         let api = APIBuilder::new()
             .with_media_engine(m)
@@ -207,23 +216,21 @@ impl WebRtcManager {
                     }
                     Err(e) => {
                         eprintln!("Failed to connect to signaling Server: {}", e);
-                        self.disconnect();
+                        self.disconnect().await;
                     }
                 }
             }
             Command::Disconnect => {
-                self.disconnect();
+                self.disconnect().await;
             }
             Command::Call => {
                 println!("Starting call");
                 let pc = self.prepare_connection(internal_tx.clone()).await?;
 
-                // Create offer
                 let offer = pc.create_offer(None).await?;
                 let sdp = offer.sdp.clone();
                 pc.set_local_description(offer).await?;
 
-                // Send offer
                 if let Some(sig) = &mut self.signaling {
                     sig.send(SignalMessage::Offer(sdp)).await?;
                 }
@@ -233,34 +240,153 @@ impl WebRtcManager {
             }
 
             Command::SetMute(active) => {
+                self.muted = active;
                 if let Some(capture) = &mut self.capture {
                     capture.set_mute(active);
                 }
             }
 
             Command::SetDeafen(active) => {
+                self.deafened = active;
                 for playback in &mut self.playbacks {
                     playback.set_deafen(active);
                 }
             }
 
             Command::SetInputVolume(volume) => {
-                println!("Setting input volume");
+                self.config.audio.input_volume = volume;
                 if let Some(capture) = &mut self.capture {
                     capture.set_volume(volume);
                 }
             }
 
             Command::SetOutputVolume(volume) => {
-                println!("Setting output volume");
+                self.config.audio.output_volume = volume;
                 for playback in &mut self.playbacks {
                     playback.set_volume(volume);
                 }
             }
+            Command::Configure(req) => {
+                self.apply_config(DaemonConfig::from_config_request(&req));
+            }
+            Command::GetConfig(tx) => {
+                let _ = tx.send(self.config.to_config_response());
+            }
 
-            _ => todo!(),
+            Command::Shutdown => {
+                self.disconnect().await;
+                self.playbacks.clear();
+                return Ok(());
+            }
+
+            _ => {
+                eprintln!("unhandled command")
+            }
         }
 
+        Ok(())
+    }
+
+    fn apply_config(&mut self, new_config: DaemonConfig) {
+        let capture_chagned = new_config.audio.input_device != self.config.audio.input_device
+            || new_config.audio.input_latency_ms != self.config.audio.input_latency_ms
+            || new_config.audio.processing != self.config.audio.processing;
+
+        let playback_changed = new_config.audio.output_device != self.config.audio.output_device;
+
+        //Hot apply -- volumes
+        if (new_config.audio.input_volume != self.config.audio.input_volume) {
+            if let Some(capture) = &mut self.capture {
+                capture.set_volume(new_config.audio.input_volume);
+            }
+        }
+
+        if (new_config.audio.output_volume != self.config.audio.output_volume) {
+            for playback in &mut self.playbacks {
+                playback.set_volume(new_config.audio.output_volume);
+            }
+        }
+
+        // hot apply -- jitter buffer
+        if new_config.audio.output_jitter_buffer_ms != self.config.audio.output_jitter_buffer_ms {
+            for playback in &mut self.playbacks {
+                playback.set_jitter_buffer_ms(new_config.audio.output_jitter_buffer_ms);
+            }
+        }
+
+        self.config = new_config;
+
+        // rebild capture/playback if big info changed
+        if capture_chagned && self.capture.is_some() {
+            if let Err(e) = self.rebuild_capture() {
+                panic!("failed to rebuild capture")
+            }
+        }
+
+        if playback_changed && !self.playbacks.is_empty() {
+            if let Err(e) = self.rebuild_playback() {
+                panic!("failed to rebuild payback")
+            }
+        }
+    }
+
+    fn capture_config(&self, track: Arc<TrackLocalStaticSample>) -> audio_capture::CaptureConfig {
+        let processing = audio_capture::ProcessingConfig {
+            vad_threshold: self.config.audio.processing.vad_threshold,
+            noise_suppression: self.config.audio.processing.noise_suppression,
+            agc_enabled: self.config.audio.processing.automatic_gain_control,
+            agc_target_level: self.config.audio.processing.agc_target_level,
+            agc_max_gain: self.config.audio.processing.agc_max_gain,
+            high_pass_filter_hz: self.config.audio.processing.high_pass_filter_hz,
+            low_pass_filter_hz: self.config.audio.processing.low_pass_filter_hz,
+        };
+
+        CaptureConfig {
+            track,
+            tokio_handle: tokio::runtime::Handle::current(),
+            sample_rate: 48000,
+            snippet_duration: 20,
+            channels: 1,
+            input_device: self.config.audio.input_device.clone(),
+            input_latency_ms: self.config.audio.input_latency_ms,
+            processing,
+        }
+    }
+
+    fn rebuild_capture(&mut self) -> Result<()> {
+        let audio_track = match &mut self.audio_track {
+            Some(t) => t.clone(),
+            None => return Ok(()),
+        };
+
+        let mut capture = audio_capture::Capture::new(self.capture_config(audio_track))?;
+        capture.set_volume(self.config.audio.input_volume);
+        capture.set_mute(self.muted);
+        self.capture = Some(capture);
+        Ok(())
+    }
+
+    fn build_playback(&self, track: Arc<TrackRemote>) -> Result<Playback> {
+        let mut playback = Playback::new(PlaybackConfig {
+            track,
+            sample_rate: 48000,
+            tokio_handle: tokio::runtime::Handle::current(),
+            channels: 1,
+            output_device: self.config.audio.output_device.clone(),
+            jitter_buffer_ms: self.config.audio.output_jitter_buffer_ms,
+        })?;
+
+        playback.set_volume(self.config.audio.output_volume);
+        playback.set_deafen(self.deafened);
+        Ok(playback)
+    }
+
+    fn rebuild_playback(&mut self) -> Result<()> {
+        self.playbacks.clear();
+        let tracks = self.remote_tracks.clone();
+        for track in tracks {
+            self.playbacks.push(self.build_playback(track)?);
+        }
         Ok(())
     }
 
@@ -328,8 +454,11 @@ impl WebRtcManager {
     async fn disconnect(&mut self) {
         println!("Cleaning up connections and media");
         self.signaling = None;
-
         self.capture = None;
+        self.audio_track = None;
+        self.remote_tracks.clear();
+        self.playbacks.clear();
+
         if let Some(pc) = self.peer_connection.take() {
             tokio::spawn(async move {
                 let _ = pc.close().await;
@@ -348,6 +477,9 @@ impl WebRtcManager {
             let _ = pc.close().await;
 
             self.capture = None;
+            self.audio_track = None;
+
+            self.remote_tracks.clear();
             self.playbacks.clear();
 
             if let DaemonState::InCall { host, port } = &self.state {
@@ -416,15 +548,9 @@ impl WebRtcManager {
     async fn start_playback(&mut self, track: Arc<TrackRemote>) -> Result<()> {
         println!("Starting audio playback for remote track: {}", track.id());
 
-        let playback = Playback::new(PlaybackConfig {
-            track: track,
-            sample_rate: 48000,
-            tokio_handle: tokio::runtime::Handle::current(),
-            channels: 1,
-        })?;
-
+        let playback = self.build_playback(track.clone())?;
+        self.remote_tracks.push(track);
         self.playbacks.push(playback);
-
         Ok(())
     }
 
@@ -433,7 +559,25 @@ impl WebRtcManager {
         internal_tx: mpsc::UnboundedSender<ManagerInternalEvent>,
     ) -> Result<Arc<RTCPeerConnection>> {
         // Create peer Connection
-        let config = webrtc::peer_connection::configuration::RTCConfiguration::default();
+        self.api = Self::setup_api(Duration::from_secs(
+            self.config.connection.ice_timeout_seconds,
+        ))?;
+
+        let ice_servers = self
+            .config
+            .connection
+            .stun_servers
+            .iter()
+            .map(|s| RTCIceServer {
+                urls: vec![s.to_owned()],
+                ..Default::default()
+            })
+            .collect();
+
+        let config = webrtc::peer_connection::configuration::RTCConfiguration {
+            ice_servers: ice_servers,
+            ..Default::default()
+        };
         let pc = Arc::new(self.api.new_peer_connection(config).await?);
 
         // Setup Audio Track & Capture
@@ -447,19 +591,13 @@ impl WebRtcManager {
             "audio".to_owned(),
             "default".to_owned(),
         ));
-
         pc.add_track(audio_track.clone()).await?;
 
-        let capture = audio_capture::Capture::new(CaptureConfig {
-            track: audio_track,
-            tokio_handle: tokio::runtime::Handle::current(),
-            sample_rate: 48000,
-            snippet_duration: 20,
-            channels: 1,
-        })?;
+        let capture = audio_capture::Capture::new(self.capture_config(audio_track.clone()))?;
 
         crate::webrtc::handlers::setup_pc_handler(&pc, internal_tx);
 
+        self.audio_track = Some(audio_track);
         self.peer_connection = Some(pc.clone());
         self.capture = Some(capture);
         Ok(pc)

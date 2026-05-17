@@ -22,7 +22,9 @@ pub struct SignalingConnection {
 
 impl SignalingConnection {
     pub async fn connect(host: &str, port: u16) -> Result<Self> {
+        dbg!((&host, &port));
         let url = format!("ws://{}:{}/signaling_route", host, port);
+        dbg!(&url);
 
         let (ws_stream, _) = connect_async(&url).await?;
 

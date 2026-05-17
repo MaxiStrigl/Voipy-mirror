@@ -168,54 +168,40 @@ impl VoicechatDaemon for VoiceChatService {
         Ok(TonicResponse::new(SetOutputVolumeResponse {}))
     }
 
-    #[doc = " Applies the full configuration upgrade to the daemon"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn configure<'life0, 'async_trait>(
-        &'life0 self,
+    /// Applies the full configuration upgrade to the daemon
+    async fn configure(
+        &self,
         request: tonic::Request<ConfigureRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<ConfigureResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    ) -> Result<tonic::Response<ConfigureResponse>, tonic::Status> {
+        let req = request.into_inner();
+        self.command_sender
+            .send(Command::Configure(req))
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        Ok(TonicResponse::new(ConfigureResponse {
+            success: true,
+            error_message: String::new(),
+        }))
     }
 
-    #[doc = " Retrieves the current configuration"]
-    #[must_use]
-    #[allow(
-        elided_named_lifetimes,
-        clippy::type_complexity,
-        clippy::type_repetition_in_bounds
-    )]
-    fn get_config<'life0, 'async_trait>(
-        &'life0 self,
-        request: tonic::Request<GetConfigRequest>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<
-                    Output = std::result::Result<tonic::Response<GetConfigResponse>, tonic::Status>,
-                > + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        Self: 'async_trait,
-    {
-        todo!()
+    /// Retrieves the current configuration"]
+    async fn get_config(
+        &self,
+        _request: tonic::Request<GetConfigRequest>,
+    ) -> Result<tonic::Response<GetConfigResponse>, tonic::Status> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.command_sender
+            .send(Command::GetConfig(tx))
+            .await
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager is not responding"))?;
+
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+            .await
+            .map_err(|_| TonicStatus::deadline_exceeded("Timed out waiting for config"))?
+            .map_err(|_| TonicStatus::unavailable("WebRTC manager dropped the config reply"))?;
+
+        Ok(TonicResponse::new(resp))
     }
 
     /// Lists available audio input devices
