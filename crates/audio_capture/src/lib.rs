@@ -23,6 +23,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::time::Duration;
 use thiserror::Error;
+use tokio::io::ReadBuf;
 use tokio::runtime::Handle;
 use webrtc::track::track_local::track_local_static_sample::TrackLocalStaticSample;
 
@@ -120,11 +121,28 @@ impl Capture {
         let shutdown_signal = Arc::new(AtomicBool::new(false));
         let shutdown_clone = shutdown_signal.clone();
         let track = config.track.clone();
-        let tokio_handle = config.tokio_handle.clone();
 
+        let packet_duration = Duration::from_millis(config.snippet_duration as u64);
+
+        let tokio_handle = config.tokio_handle.clone();
         let frame_size = (stream_config.sample_rate as f32
             * (config.snippet_duration as f32 / 1000.0)) as usize
             * stream_config.channels as usize;
+
+        let (packet_tx, mut packet_rx) = tokio::sync::mpsc::channel::<(Vec<u8>, Duration)>(64);
+
+        config.tokio_handle.spawn(async move {
+            while let Some((payload, duration)) = packet_rx.recv().await {
+                let sample = webrtc::media::Sample {
+                    data: payload.into(),
+                    duration,
+                    ..Default::default()
+                };
+                if track.write_sample(&sample).await.is_err() {
+                    break;
+                }
+            }
+        });
 
         let worker_thread = std::thread::spawn(move || {
             let core_ids = core_affinity::get_core_ids().unwrap();
@@ -149,38 +167,33 @@ impl Capture {
             .expect("Failed to create processor");
 
             let mut read_buffer = vec![0.0f32; frame_size];
+            let mut dropped_packets: u64 = 0;
 
             while !shutdown_clone.load(Relaxed) {
                 if cons.occupied_len() >= frame_size {
                     cons.pop_slice(&mut read_buffer);
 
-                    let processed_data = match processor.process(&read_buffer) {
-                        Ok(data) => data,
+                    match processor.process(&read_buffer) {
+                        Ok(data) if !data.is_empty() => {
+                            if packet_tx
+                                .try_send((data.to_vec(), packet_duration))
+                                .is_err()
+                            {
+                                dropped_packets += 1;
+                            }
+                        }
+                        Ok(_) => {}
                         Err(e) => {
                             eprintln!("Encoding Error: {:?}", e);
-                            continue;
                         }
-                    };
-
-                    if processed_data.is_empty() {
-                        continue;
                     }
-
-                    let track_clone = track.clone();
-                    let out_bytes = processed_data.to_vec();
-
-                    tokio_handle.spawn(async move {
-                        let _ = track_clone
-                            .write_sample(&webrtc::media::Sample {
-                                data: out_bytes.into(),
-                                duration: Duration::from_millis(config.snippet_duration as u64),
-                                ..Default::default()
-                            })
-                            .await;
-                    });
                 } else {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
+            }
+
+            if dropped_packets > 0 {
+                eprintln!("Capture dropped {} packets", dropped_packets);
             }
 
             if let Some(handle) = thread_priority_handle {
@@ -391,7 +404,7 @@ impl AudioProcessor {
         fx_chain.set_sample_rate(input_sample_rate as f64);
 
         let mut fx_post_chain = Box::new(post_chain);
-        fx_post_chain.set_sample_rate(input_sample_rate as f64);
+        fx_post_chain.set_sample_rate(48000 as f64);
 
         let denoiser = DenoiseState::new();
 

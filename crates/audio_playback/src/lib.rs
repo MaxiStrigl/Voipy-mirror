@@ -101,7 +101,7 @@ impl JitterMetrics {
     /// Slowly decay target if things are stable
     fn decay_target(&mut self) {
         if self.underrun_count == 0 {
-            let next = (self.get_target_samples() - 1).max(self.max_samples);
+            let next = (self.get_target_samples() - 1).min(self.min_samples);
             self.target_samples.store(next as u32, Ordering::Relaxed);
         } else {
             self.underrun_count = 0;
