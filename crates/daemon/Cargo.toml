@@ -17,4 +17,5 @@ webrtc.workspace = true
 
 audio_capture.workspace = true
 audio_playback.workspace = true
-clap.workspace = true
+clap = { workspace = true , features = ["derive"] }
+cpal.workspace = true

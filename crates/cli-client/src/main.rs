@@ -1,260 +1,144 @@
-use std::{env, process::Stdio, time::Duration};
+mod cli;
+mod client;
+mod config;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::Parser;
 use daemon_protocol::voicechat::{
-    voicechat_daemon_client::VoicechatDaemonClient, SetInputVolumeRequest, SetOutputVolumeRequest, ShutdownRequest, StartRequest, StopRequest
+    GetConfigRequest, voicechat_daemon_client::VoicechatDaemonClient,
 };
+use serde_json::Value;
 
-use std::process::Command as StdCommand;
-
-#[derive(Parser)]
-#[command(version, about, infer_subcommands = true)]
-struct Cli {
-    #[arg(long, global = true, default_value_t = 40001)]
-    port: u16,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    #[arg(short, long, action = clap::ArgAction::SetTrue)]
-    interactive: bool,
-}
-
-#[derive(Subcommand)]
-enum DaemonCommands {
-    Start {
-        #[arg(long)]
-        signaling_ip: String,
+use crate::{
+    cli::{Cli, Command, ConfigAction},
+    client::{
+        connect, disconnect, get_current_config, get_devices, get_monitor, get_status, hangup,
+        is_daemon_running, send_shutdown, set_config, set_deafen, set_input_volume, set_mute,
+        set_output_volume, start_call, start_daemon,
     },
-    Stop {},
-}
-
-#[derive(Copy, Clone, ValueEnum)]
-enum VolumeAction {
-    #[value(alias = "g")]
-    Get,
-    #[value(alias = "s")]
-    Set,
-    #[value(alias = "m")]
-    Mute,
-}
-
-#[derive(Copy, Clone, PartialEq, ValueEnum)]
-enum VolumeTarget {
-    #[value(name = "self", alias = "s")]
-    Self_,
-    #[value(alias = "o")]
-    Other,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    #[command(alias = "call-start")]
-    /// Starts a new call
-    Start {
-        #[arg(long)]
-        ip: Option<String>,
-    },
-    /// Stop a call
-    #[command(alias = "call-stop")]
-    Stop,
-    /// Get Status
-    #[command(alias = "call-status")]
-    Status,
-    /// Manage Daemon
-    Daemon {
-        #[command(subcommand)]
-        command: DaemonCommands,
-    },
-
-    /// Volume Settings
-    Volume {
-        #[arg(value_enum)]
-        /// Action to execute.
-        action: VolumeAction,
-        #[arg(value_enum)]
-        /// Target for the action. 
-        target: VolumeTarget,
-        /// New value for 'set' command.
-        value: Option<f32>,
-    },
-}
-
-async fn is_daemon_running() -> bool {
-    VoicechatDaemonClient::connect("http://[::1]:40001")
-        .await
-        .is_ok()
-}
-
-async fn handle_command(
-    command: Commands,
-    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
-) -> Result<()> {
-    match command {
-        Commands::Start { .. } => {
-            let request = tonic::Request::new(StartRequest {});
-            println!("Sending start request...");
-            let response = client.start(request).await;
-            println!("Received answer {:?}", response);
-        }
-        Commands::Stop => {
-            let request = tonic::Request::new(StopRequest {});
-            println!("Sending stop request...");
-            let response = client.stop(request).await;
-            println!("Received answer {:?}", response);
-        }
-        Commands::Status => todo!(),
-        Commands::Daemon { .. } => {}
-        Commands::Volume {
-            action,
-            target,
-            value,
-        } => match action {
-            VolumeAction::Set => {
-                if target == VolumeTarget::Self_ {
-                    if let Some(value) = value {
-                        let request = tonic::Request::new(SetInputVolumeRequest { volume: value });
-                        println!("Sending set volume Request {}", value);
-                        let response = client.set_input_volume(request).await;
-                        println!("Received answer {:?}", response);
-                    } else {
-                        println!("Value is required for 'set' action.");
-                    }
-                } else {
-                    if let Some(value) = value {
-                        let request = tonic::Request::new(SetOutputVolumeRequest { volume: value });
-                        println!("Sending set volume Request {}", value);
-                        let response = client.set_output_volume(request).await;
-                        println!("Received answer {:?}", response);
-                    } else {
-                        println!("Value is required for 'set' action.");
-                    }
-                }
-            }
-            VolumeAction::Get => {
-                println!("Get volume not yet implemented.");
-            }
-            VolumeAction::Mute => {
-                println!("Mute volume not yet implemented.");
-            }
-        },
-    }
-
-    Ok(())
-}
-
-async fn start_daemon(signaling_ip: &str) -> Result<()> {
-    println!("Attempting to start daemon");
-
-    let args = ["--signaling-ip", signaling_ip];
-    let mut daemon_started = false;
-
-    let binary_name = format!("voipyd{}", env::consts::EXE_SUFFIX);
-    let binary_path_cwd = format!(".{}{}", std::path::MAIN_SEPARATOR, binary_name);
-
-    // Try path first
-    if StdCommand::new(&binary_name)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .is_ok()
-    {
-        println!("Started daemon from PATH");
-        daemon_started = true;
-    }
-
-    if !daemon_started {
-        if StdCommand::new(&binary_path_cwd)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
-            println!("Started daemon from cwd");
-            daemon_started = true;
-        }
-    }
-
-    if !daemon_started {
-        if StdCommand::new("cargo")
-            .args(&[
-                "run",
-                "--package",
-                "daemon",
-                "--",
-                "--signaling-ip",
-                signaling_ip,
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
-            println!("Started daemon using cargo.");
-            daemon_started = true;
-        }
-    }
-
-    if !daemon_started {
-        return Err(anyhow::anyhow!(
-            "Couldn't start daemon using any method (PATH, cwd, cargo)"
-        ));
-    }
-
-    tokio::time::sleep(Duration::from_secs(4)).await;
-
-    Ok(())
-}
+    config::Config,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let command = cli.command;
+    let grpc_addr = format!("http://[::1]:{}", cli.grpc_port);
 
-    if let Some(Commands::Daemon { command }) = &cli.command {
-        match command {
-            DaemonCommands::Start { signaling_ip } => {
-                if !is_daemon_running().await {
-                    start_daemon(signaling_ip).await?;
-                }
-            }
-            DaemonCommands::Stop {} => {
-                if is_daemon_running().await {
-                    let request = tonic::Request::new(ShutdownRequest {});
-                    println!("Sending daemon shutdown request");
-                    let mut client = VoicechatDaemonClient::connect("http://[::1]:40001").await?;
-                    println!("Shutdown daemon");
-                    client.shutdown(request).await?;
-                } else {
-                    println!("Daemon is already dead.");
-                }
-                return Ok(());
-            }
+    // Check if daemon is running and start it if not
+    let mut client = if is_daemon_running().await == false {
+        let result = start_daemon().await;
+
+        // Get the config
+        let config = Config::load(None)?;
+
+        // Connect to the client
+        let mut client = VoicechatDaemonClient::connect(grpc_addr).await?;
+
+        // Apply the config
+        set_config(&mut client, config).await?;
+
+        if let Err(e) = result {
+            return Err(e);
         }
+        client
+    } else {
+        VoicechatDaemonClient::connect(grpc_addr).await?
     };
 
-    if let Some(Commands::Start { ip }) = &cli.command {
-        if !is_daemon_running().await && ip.is_some() {
-            start_daemon(&ip.clone().unwrap()).await?;
+    match command {
+        Command::Connect { address, port } => connect(&mut client, address, port).await?,
+
+        Command::Disconnect => disconnect(&mut client).await?,
+
+        Command::Call => start_call(&mut client).await?,
+
+        Command::Hangup => hangup(&mut client).await?,
+
+        Command::Mute { active } => set_mute(&mut client, active).await?,
+        Command::Deafen { active } => set_deafen(&mut client, active).await?,
+        Command::Volume {
+            volume,
+            input,
+            output,
+        } => {
+            if input {
+                set_input_volume(&mut client, volume).await?;
+            }
+            if output {
+                set_output_volume(&mut client, volume).await?;
+            }
         }
+        Command::Config { action } => handle_config(&mut client, action).await?,
+        Command::Devices { input, output } => get_devices(&mut client, input, output).await?,
+        Command::Status => get_status(&mut client).await?,
+        Command::Monitor => get_monitor(&mut client).await?,
+        Command::Shutdown => send_shutdown(&mut client).await?,
+        Command::Shell => todo!(),
+        Command::Tui => todo!(),
     }
 
-    if cli.interactive {
-        println!("Entering interactive mode. Type 'help' for commands, 'exit' to quit");
-        println!("Just kidding. Imagine Maxi really did that. lol");
-        return Ok(());
-    } else if cli.command.is_some() {
-        if !is_daemon_running().await {
-            eprintln!("Daemon not started. START IT PLS. BECAUSE I CAN'T. THX FOR NOTHING MAXI");
-        }
-
-        let mut client =
-            VoicechatDaemonClient::connect(format!("http://[::1]:{}", cli.port)).await?;
-
-        handle_command(cli.command.unwrap(), &mut client).await?;
-    };
-
     Ok(())
+}
+
+async fn handle_config(
+    client: &mut VoicechatDaemonClient<tonic::transport::Channel>,
+    action: ConfigAction,
+) -> Result<()> {
+    match action {
+        ConfigAction::Get { key } => {
+            let response = client.get_config(GetConfigRequest {}).await?.into_inner();
+            let config: Config = response.into();
+
+            if let Some(path) = key {
+                let mut current_value: Value = serde_json::to_value(config)?;
+
+                for part in path.split('.') {
+                    if let Value::Object(map) = current_value {
+                        if let Some(v) = map.get(part) {
+                            current_value = v.clone();
+                        } else {
+                            println!("Key '{}' not found", path);
+                            return Ok(());
+                        }
+                    } else {
+                        println!("Key '{}' is invalid", path);
+                        return Ok(());
+                    }
+                }
+                println!("{} = {}", path, current_value);
+            } else {
+                println!("Please provide a key (e.g. 'audio.input_volume')");
+            }
+            Ok(())
+        }
+        ConfigAction::Set(config_set_args) => {
+            let response = client.get_config(GetConfigRequest {}).await?.into_inner();
+            let mut config: Config = response.into();
+
+            config.apply_args(config_set_args);
+
+            config.save(None)?;
+
+            set_config(client, config).await?;
+
+            Ok(())
+        }
+        ConfigAction::Load { path } => {
+            let config = Config::load(path)?;
+            set_config(client, config).await
+        }
+        ConfigAction::Save { path } => {
+            let response = get_current_config(client).await?;
+            let config = Config::from(response);
+            config.save(path)
+        }
+        ConfigAction::List => {
+            let response = get_current_config(client).await?;
+            let config: Config = response.into();
+            let json = serde_json::to_string_pretty(&config)?;
+            println!("{}", json);
+            Ok(())
+        }
+    }
 }
