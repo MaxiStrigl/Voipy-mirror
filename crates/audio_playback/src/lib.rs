@@ -6,12 +6,11 @@ use opus::Decoder;
 use ringbuf::HeapRb;
 use ringbuf::traits::*;
 use rubato::{ResampleError, Resampler, ResamplerConstructionError};
+use std::sync::Arc;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
 use thiserror::Error;
 use tokio::runtime::Handle;
-use tokio_tungstenite::tungstenite::error;
 use webrtc::track::track_remote::TrackRemote;
 
 type ProdType = ringbuf::wrap::caching::Caching<

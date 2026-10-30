@@ -1,5 +1,5 @@
 pub struct Agc {
-    sample_rate: f32,
+    _sample_rate: f32,
     channels: usize,
 
     target_level: f32,
@@ -21,7 +21,7 @@ impl Agc {
         let release_coeff = (-1.0 / (0.5 * sample_rate)).exp();
 
         Self {
-            sample_rate: sample_rate as f32,
+            _sample_rate: sample_rate as f32,
             channels,
             target_level: 0.05,
             max_gain: 6.0,
@@ -30,14 +30,6 @@ impl Agc {
             envelope: 0.0,
             attack_coeff,
             release_coeff,
-        }
-    }
-
-    pub fn get_envelope_db(&self) -> f32 {
-        if self.envelope <= 0.0 {
-            -120.0 // Return a very low dB value for silence or invalid envelope
-        } else {
-            20.0 * self.envelope.log10()
         }
     }
 
@@ -70,7 +62,7 @@ impl Agc {
             for sample in frame.iter_mut() {
                 *sample *= self.current_gain;
 
-                *sample = *sample / (1.0 + sample.abs()) 
+                *sample = *sample / (1.0 + sample.abs())
             }
         }
     }

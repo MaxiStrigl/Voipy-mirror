@@ -1,9 +1,7 @@
 use daemon_protocol::voicechat as dp;
-use tonic::IntoRequest;
-use webrtc::util::Conn;
 
 const DEFAULT_SIGNALING_PORT: u16 = 40000;
-const DEFAULT_ICE_TIMEOUT_SECONDS: u16 = 5;
+const DEFAULT_ICE_TIMEOUT_SECONDS: u64 = 5;
 const DEFAULT_LATENCY_MS: u32 = 200;
 const DEFAULT_JITTER_MS: u32 = 200;
 
@@ -42,7 +40,7 @@ impl Default for ConnectionConfig {
             server_ip: String::new(),
             signaling_port: DEFAULT_SIGNALING_PORT,
             stun_servers: Default::default(),
-            ice_timeout_seconds: Default::default(),
+            ice_timeout_seconds: DEFAULT_ICE_TIMEOUT_SECONDS,
         }
     }
 }

@@ -4,18 +4,16 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-tokio.workspace = true
-tonic.workspace = true
-daemon-protocol.workspace = true
-
 anyhow.workspace = true
-futures-util.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tokio-tungstenite.workspace = true
-webrtc.workspace = true
-
 audio_capture.workspace = true
 audio_playback.workspace = true
 clap = { workspace = true , features = ["derive"] }
 cpal.workspace = true
+daemon-protocol.workspace = true
+futures-util.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+tokio-tungstenite.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+webrtc.workspace = true

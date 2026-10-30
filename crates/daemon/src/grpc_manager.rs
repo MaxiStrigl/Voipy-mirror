@@ -1,4 +1,4 @@
-use std::{net::Shutdown, pin::Pin};
+use std::pin::Pin;
 
 use daemon_protocol::voicechat::{
     AudioLevelsUpdate, CallRequest, CallResponse, ConfigureRequest, ConfigureResponse,
@@ -9,7 +9,7 @@ use daemon_protocol::voicechat::{
     SetOutputVolumeResponse, ShutdownRequest, ShutdownResponse, StatusUpdate,
     SubscribeAudioLevelsRequest, SubscribeStatusRequest, voicechat_daemon_server::VoicechatDaemon,
 };
-use futures_util::{Stream, future::ok};
+use futures_util::Stream;
 use tokio::sync::{mpsc, watch};
 use tonic::{Request as TonicRequest, Response as TonicResponse, Status as TonicStatus};
 

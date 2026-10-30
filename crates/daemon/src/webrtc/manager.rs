@@ -20,8 +20,7 @@ use webrtc::{
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
     stats::StatsReportType,
     track::{
-        self, track_local::track_local_static_sample::TrackLocalStaticSample,
-        track_remote::TrackRemote,
+        track_local::track_local_static_sample::TrackLocalStaticSample, track_remote::TrackRemote,
     },
 };
 
@@ -37,8 +36,8 @@ enum DaemonState {
     Disconnected,
     Connecting {
         host: String,
-        port: u16,
-        retry_count: u32,
+        _port: u16,
+        _retry_count: u32,
     },
     Connected {
         host: String,
@@ -200,8 +199,8 @@ impl WebRtcManager {
             Command::Connect { host, port } => {
                 self.state = DaemonState::Connecting {
                     host: host.clone(),
-                    port,
-                    retry_count: 0,
+                    _port: port,
+                    _retry_count: 0,
                 };
                 self.sync_status().await;
 
@@ -278,10 +277,6 @@ impl WebRtcManager {
                 self.playbacks.clear();
                 return Ok(());
             }
-
-            _ => {
-                eprintln!("unhandled command")
-            }
         }
 
         Ok(())
@@ -295,13 +290,13 @@ impl WebRtcManager {
         let playback_changed = new_config.audio.output_device != self.config.audio.output_device;
 
         //Hot apply -- volumes
-        if (new_config.audio.input_volume != self.config.audio.input_volume) {
+        if new_config.audio.input_volume != self.config.audio.input_volume {
             if let Some(capture) = &mut self.capture {
                 capture.set_volume(new_config.audio.input_volume);
             }
         }
 
-        if (new_config.audio.output_volume != self.config.audio.output_volume) {
+        if new_config.audio.output_volume != self.config.audio.output_volume {
             for playback in &mut self.playbacks {
                 playback.set_volume(new_config.audio.output_volume);
             }
@@ -319,13 +314,13 @@ impl WebRtcManager {
         // rebild capture/playback if big info changed
         if capture_chagned && self.capture.is_some() {
             if let Err(e) = self.rebuild_capture() {
-                panic!("failed to rebuild capture")
+                panic!("failed ro rebuild capture: {e}")
             }
         }
 
         if playback_changed && !self.playbacks.is_empty() {
             if let Err(e) = self.rebuild_playback() {
-                panic!("failed to rebuild payback")
+                panic!("failed to rebuild payback: {e}")
             }
         }
     }
